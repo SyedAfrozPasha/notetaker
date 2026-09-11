@@ -77,7 +77,12 @@ def parse_note_meta(path: Path) -> NoteMeta:
 def list_notes(notes_dir: Path) -> list[NoteMeta]:
     if not notes_dir.exists():
         return []
-    metas = [parse_note_meta(p) for p in sorted(notes_dir.glob("*.md"))]
+    metas = []
+    for p in sorted(notes_dir.glob("*.md")):
+        try:
+            metas.append(parse_note_meta(p))
+        except (ValueError, KeyError):
+            continue
     return sorted(metas, key=lambda m: m.date, reverse=True)
 
 

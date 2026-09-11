@@ -62,6 +62,17 @@ def test_list_notes_empty_dir_returns_empty_list(tmp_path):
     assert list_notes(tmp_path / "does-not-exist") == []
 
 
+def test_list_notes_skips_unparseable_md_file(tmp_path):
+    summary = Summary(text="s", action_items=[], tags=[])
+    write_note(tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 5, summary, [])
+    (tmp_path / "README.md").write_text("# Just a plain markdown file\nNo frontmatter here.\n")
+
+    notes = list_notes(tmp_path)
+
+    assert len(notes) == 1
+    assert notes[0].title == "Standup"
+
+
 def test_find_note_path(tmp_path):
     summary = Summary(text="s", action_items=[], tags=[])
     write_note(tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 5, summary, [])
