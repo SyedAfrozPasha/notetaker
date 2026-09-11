@@ -2,7 +2,7 @@
 name = "notetaker"
 version = "0.1.0"
 description = "Records, transcribes, and summarizes Microsoft Teams meetings locally on macOS."
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.12"
 dependencies = [
     "typer>=0.12",
     "pyyaml>=6.0",
