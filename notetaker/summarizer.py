@@ -1,5 +1,8 @@
+import json
 from dataclasses import dataclass
 from typing import Protocol
+
+import anthropic
 
 
 @dataclass
@@ -59,3 +62,33 @@ def summarize_transcript(
         [item for p in partials for item in p.action_items] + reduced.action_items
     )
     return Summary(text=reduced.text, action_items=action_items, tags=tags)
+
+
+SUMMARY_PROMPT_TEMPLATE = """You will be given a meeting transcript. Respond with ONLY a JSON object \
+with exactly these keys: "text" (a concise summary, string), "action_items" (a list of strings), \
+"tags" (a list of short lowercase topic tags, strings). No other text, no markdown fences.
+
+Transcript:
+{transcript}
+"""
+
+
+class ClaudeProvider:
+    def __init__(self, api_key: str, model: str):
+        self._client = anthropic.Anthropic(api_key=api_key)
+        self._model = model
+
+    def summarize(self, transcript: str) -> Summary:
+        response = self._client.messages.create(
+            model=self._model,
+            max_tokens=1024,
+            messages=[
+                {"role": "user", "content": SUMMARY_PROMPT_TEMPLATE.format(transcript=transcript)}
+            ],
+        )
+        data = json.loads(response.content[0].text)
+        return Summary(
+            text=data["text"],
+            action_items=data.get("action_items", []),
+            tags=data.get("tags", []),
+        )

@@ -1,4 +1,8 @@
+import json
+from unittest.mock import MagicMock
+
 from notetaker.summarizer import (
+    ClaudeProvider,
     Summary,
     chunk_transcript,
     estimate_tokens,
@@ -54,3 +58,22 @@ def test_summarize_transcript_reduces_multiple_chunks():
     assert result.tags == ["t1", "t2", "t3"]
     assert result.action_items == ["a1", "a2", "a3"]
     assert len(provider.calls) == 3
+
+
+def test_claude_provider_parses_json_response(monkeypatch):
+    fake_client = MagicMock()
+    fake_response = MagicMock()
+    fake_response.content = [
+        MagicMock(text=json.dumps({"text": "summary", "action_items": ["do x"], "tags": ["standup"]}))
+    ]
+    fake_client.messages.create.return_value = fake_response
+    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", lambda api_key: fake_client)
+
+    provider = ClaudeProvider(api_key="fake-key", model="claude-sonnet-5")
+    result = provider.summarize("[00:00:01] hello")
+
+    assert result.text == "summary"
+    assert result.action_items == ["do x"]
+    assert result.tags == ["standup"]
+    fake_client.messages.create.assert_called_once()
+    assert fake_client.messages.create.call_args.kwargs["model"] == "claude-sonnet-5"
