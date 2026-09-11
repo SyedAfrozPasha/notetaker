@@ -1,9 +1,13 @@
+import io
 import json
 from unittest.mock import MagicMock
 
 from notetaker.summarizer import (
+    AppleLocalError,
+    AppleLocalProvider,
     ClaudeProvider,
     Summary,
+    check_apple_local_preflight,
     chunk_transcript,
     estimate_tokens,
     summarize_transcript,
@@ -77,3 +81,93 @@ def test_claude_provider_parses_json_response(monkeypatch):
     assert result.tags == ["standup"]
     fake_client.messages.create.assert_called_once()
     assert fake_client.messages.create.call_args.kwargs["model"] == "claude-sonnet-5"
+
+
+def _fake_urlopen_response(payload: dict):
+    return io.BytesIO(json.dumps(payload).encode())
+
+
+def test_apple_local_provider_parses_openai_shaped_response(monkeypatch):
+    response_payload = {
+        "choices": [
+            {"message": {"content": json.dumps({"text": "s", "action_items": [], "tags": ["x"]})}}
+        ]
+    }
+
+    class FakeCtx:
+        def __enter__(self):
+            return _fake_urlopen_response(response_payload)
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr("notetaker.summarizer.urllib.request.urlopen", lambda req, timeout=60: FakeCtx())
+
+    provider = AppleLocalProvider()
+    result = provider.summarize("[00:00:01] hi")
+    assert result.text == "s"
+    assert result.tags == ["x"]
+
+
+def test_apple_local_provider_raises_on_connection_failure(monkeypatch):
+    import urllib.error
+
+    def raise_error(req, timeout=60):
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr("notetaker.summarizer.urllib.request.urlopen", raise_error)
+    provider = AppleLocalProvider()
+    try:
+        provider.summarize("hi")
+        assert False, "expected AppleLocalError"
+    except AppleLocalError:
+        pass
+
+
+def test_check_apple_local_preflight_flags_non_macos(monkeypatch):
+    monkeypatch.setattr("notetaker.summarizer.platform.system", lambda: "Linux")
+    problems = check_apple_local_preflight()
+    assert any("macOS" in p for p in problems)
+
+
+def test_check_apple_local_preflight_flags_old_macos(monkeypatch):
+    monkeypatch.setattr("notetaker.summarizer.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("notetaker.summarizer.platform.mac_ver", lambda: ("15.1", ("", "", ""), ""))
+    problems = check_apple_local_preflight()
+    assert any("macOS 26" in p for p in problems)
+
+
+def test_check_apple_local_preflight_flags_missing_apfel(monkeypatch):
+    import subprocess as sp
+
+    monkeypatch.setattr("notetaker.summarizer.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("notetaker.summarizer.platform.mac_ver", lambda: ("26.0", ("", "", ""), ""))
+    monkeypatch.setattr("notetaker.summarizer.shutil.which", lambda name: "/usr/local/bin/brew")
+    monkeypatch.setattr(
+        "notetaker.summarizer.subprocess.run",
+        lambda *a, **k: sp.CompletedProcess(a, returncode=1),
+    )
+    problems = check_apple_local_preflight()
+    assert any("apfel is not installed" in p for p in problems)
+
+
+def test_check_apple_local_preflight_passes_when_everything_ready(monkeypatch):
+    import subprocess as sp
+
+    monkeypatch.setattr("notetaker.summarizer.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("notetaker.summarizer.platform.mac_ver", lambda: ("26.0", ("", "", ""), ""))
+    monkeypatch.setattr("notetaker.summarizer.shutil.which", lambda name: "/usr/local/bin/brew")
+    monkeypatch.setattr(
+        "notetaker.summarizer.subprocess.run",
+        lambda *a, **k: sp.CompletedProcess(a, returncode=0),
+    )
+
+    class FakeCtx:
+        def __enter__(self):
+            return io.BytesIO(b"{}")
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr("notetaker.summarizer.urllib.request.urlopen", lambda req, timeout=2: FakeCtx())
+    assert check_apple_local_preflight() == []

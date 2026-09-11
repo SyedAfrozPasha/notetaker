@@ -1,4 +1,9 @@
 import json
+import platform
+import shutil
+import subprocess
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -92,3 +97,72 @@ class ClaudeProvider:
             action_items=data.get("action_items", []),
             tags=data.get("tags", []),
         )
+
+
+APPLE_LOCAL_BASE_URL = "http://localhost:11434/v1"
+
+
+class AppleLocalError(Exception):
+    pass
+
+
+class AppleLocalProvider:
+    def __init__(self, base_url: str = APPLE_LOCAL_BASE_URL, model: str = "apple-fm"):
+        self._base_url = base_url
+        self._model = model
+
+    def summarize(self, transcript: str) -> Summary:
+        payload = {
+            "model": self._model,
+            "messages": [
+                {"role": "user", "content": SUMMARY_PROMPT_TEMPLATE.format(transcript=transcript)}
+            ],
+        }
+        request = urllib.request.Request(
+            f"{self._base_url}/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                data = json.loads(response.read())
+        except urllib.error.URLError as exc:
+            raise AppleLocalError(f"Could not reach apfel at {self._base_url}: {exc}") from exc
+        raw = data["choices"][0]["message"]["content"]
+        parsed = json.loads(raw)
+        return Summary(
+            text=parsed["text"],
+            action_items=parsed.get("action_items", []),
+            tags=parsed.get("tags", []),
+        )
+
+
+def check_apple_local_preflight() -> list[str]:
+    problems: list[str] = []
+    if platform.system() != "Darwin":
+        problems.append("apple_local requires macOS.")
+        return problems
+
+    major = int(platform.mac_ver()[0].split(".")[0] or 0)
+    if major < 26:
+        problems.append(f"apple_local requires macOS 26+ (found {platform.mac_ver()[0]}).")
+
+    if shutil.which("brew") is None:
+        problems.append("Homebrew is required to install apfel. See https://brew.sh")
+        return problems
+
+    installed = subprocess.run(["brew", "list", "apfel"], capture_output=True).returncode == 0
+    if not installed:
+        problems.append("apfel is not installed. Run: brew install apfel")
+        return problems
+
+    try:
+        with urllib.request.urlopen(f"{APPLE_LOCAL_BASE_URL}/models", timeout=2):
+            pass
+    except urllib.error.URLError:
+        problems.append(
+            "apfel is installed but its service is not running. Run: brew services start apfel"
+        )
+
+    return problems
