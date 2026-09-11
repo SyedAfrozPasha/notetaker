@@ -11,7 +11,7 @@ from pathlib import Path
 import typer
 
 from notetaker.config import CONFIG_DIR, load_config, write_default_config
-from notetaker.notes import write_note
+from notetaker.notes import find_note_path, list_notes, read_note_body, write_note
 from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
 from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript
 from notetaker.transcriber import Transcriber
@@ -164,3 +164,21 @@ def stop():
     SESSION_FILE.unlink()
 
     typer.echo(f"Saved note: {note_path}")
+
+
+@app.command(name="list")
+def list_command():
+    config = load_config()
+    for meta in list_notes(config.notes_dir):
+        tags = ", ".join(meta.tags)
+        typer.echo(f"{meta.note_id}  {meta.title}  [{tags}]")
+
+
+@app.command()
+def show(note_id: str):
+    config = load_config()
+    path = find_note_path(config.notes_dir, note_id)
+    if path is None:
+        typer.echo(f"error: no note found with id '{note_id}'.", err=True)
+        raise typer.Exit(1)
+    typer.echo(read_note_body(path))

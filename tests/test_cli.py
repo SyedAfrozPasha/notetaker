@@ -219,3 +219,48 @@ def test_stop_saves_note_with_error_when_summarization_fails(monkeypatch, tmp_pa
     assert len(saved_notes) == 1
     assert "Summarization failed" in saved_notes[0].read_text()
     assert "hello" in saved_notes[0].read_text()
+
+
+from datetime import datetime
+
+from notetaker.notes import write_note
+from notetaker.summarizer import Summary
+
+
+def test_list_prints_notes(monkeypatch, tmp_path):
+    notes_dir = tmp_path / "notes"
+    write_note(notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], ["proj"]), [])
+    monkeypatch.setattr(
+        "notetaker.cli.load_config",
+        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+    )
+    result = runner.invoke(app, ["list"])
+    assert result.exit_code == 0
+    assert "Standup" in result.output
+    assert "proj" in result.output
+
+
+def test_show_prints_note_body(monkeypatch, tmp_path):
+    notes_dir = tmp_path / "notes"
+    write_note(
+        notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5,
+        Summary("Summary text", [], []), ["[00:00:01] hi"],
+    )
+    monkeypatch.setattr(
+        "notetaker.cli.load_config",
+        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+    )
+    result = runner.invoke(app, ["show", "2026-09-11-standup"])
+    assert result.exit_code == 0
+    assert "Summary text" in result.output
+
+
+def test_show_missing_note_fails(monkeypatch, tmp_path):
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    monkeypatch.setattr(
+        "notetaker.cli.load_config",
+        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+    )
+    result = runner.invoke(app, ["show", "nonexistent"])
+    assert result.exit_code == 1
