@@ -106,3 +106,26 @@ def test_start_spawns_recorder_and_writes_session_file(monkeypatch, tmp_path):
     session = json.loads(session_file.read_text())
     assert session["pid"] == 12345
     assert session["title"] == "Standup"
+
+
+def test_start_recovers_from_corrupt_session_file(monkeypatch, tmp_path):
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text("{invalid json content")
+    monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
+    monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.cli.find_blackhole_device_index", lambda: 2)
+    monkeypatch.setattr(
+        "notetaker.cli.load_config",
+        lambda: Config(tmp_path, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+    )
+    fake_proc = MagicMock(pid=54321)
+    monkeypatch.setattr("notetaker.cli.subprocess.Popen", lambda *a, **k: fake_proc)
+
+    result = runner.invoke(app, ["start", "Weekly"])
+
+    assert result.exit_code == 0
+    assert "Recording started" in result.output
+    session = json.loads(session_file.read_text())
+    assert session["pid"] == 54321
+    assert session["title"] == "Weekly"

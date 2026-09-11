@@ -79,10 +79,13 @@ def _pid_alive(pid: int) -> bool:
 @app.command()
 def start(title: str):
     if SESSION_FILE.exists():
-        session = json.loads(SESSION_FILE.read_text())
-        if _pid_alive(session["pid"]):
-            typer.echo("error: a session is already running. Run `notetaker stop` first.", err=True)
-            raise typer.Exit(1)
+        try:
+            session = json.loads(SESSION_FILE.read_text())
+            if _pid_alive(session["pid"]):
+                typer.echo("error: a session is already running. Run `notetaker stop` first.", err=True)
+                raise typer.Exit(1)
+        except (json.JSONDecodeError, KeyError, OSError):
+            pass
 
     status = check_blackhole()
     if status != BlackHoleStatus.ACTIVE:
