@@ -64,6 +64,32 @@ def test_summarize_transcript_reduces_multiple_chunks():
     assert len(provider.calls) == 3
 
 
+def test_summarize_transcript_reduce_step_recurses_when_combined_exceeds_limit():
+    # 3 lines, each a single token-heavy "line" so chunk_transcript splits them
+    # into 3 separate initial chunks (each comfortably under the char limit).
+    lines = ["a" * 160, "b" * 160, "c" * 160]
+    transcript = "\n".join(lines)
+    chunk_token_limit = 50
+    max_chars = chunk_token_limit * 4
+
+    long_partial_text = "x" * 70  # combined (3 * 70 + separators) exceeds 50 tokens
+    responses = [
+        Summary(text=long_partial_text, action_items=[], tags=["t1"]),
+        Summary(text=long_partial_text, action_items=[], tags=["t2"]),
+        Summary(text=long_partial_text, action_items=[], tags=["t3"]),
+        Summary(text="ns1", action_items=[], tags=["nt1"]),
+        Summary(text="ns2", action_items=[], tags=["nt2"]),
+        Summary(text="final", action_items=["fa"], tags=["ft"]),
+    ]
+    provider = FakeProvider(responses)
+
+    result = summarize_transcript(transcript, provider, chunk_token_limit=chunk_token_limit)
+
+    assert result.text == "final"
+    assert len(provider.calls) == 6
+    assert all(len(call) <= max_chars for call in provider.calls)
+
+
 def test_claude_provider_parses_json_response(monkeypatch):
     fake_client = MagicMock()
     fake_response = MagicMock()
@@ -81,6 +107,23 @@ def test_claude_provider_parses_json_response(monkeypatch):
     assert result.tags == ["standup"]
     fake_client.messages.create.assert_called_once()
     assert fake_client.messages.create.call_args.kwargs["model"] == "claude-sonnet-5"
+
+
+def test_claude_provider_parses_json_response_wrapped_in_markdown_fences(monkeypatch):
+    fake_client = MagicMock()
+    fake_response = MagicMock()
+    fenced = "```json\n" + json.dumps({"text": "summary", "action_items": ["do x"], "tags": ["standup"]}) + "\n```"
+    fake_response.content = [MagicMock(text=fenced)]
+    fake_client.messages.create.return_value = fake_response
+    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", lambda api_key: fake_client)
+
+    provider = ClaudeProvider(api_key="fake-key", model="claude-sonnet-5")
+    result = provider.summarize("[00:00:01] hello")
+
+    assert result.text == "summary"
+    assert result.action_items == ["do x"]
+    assert result.tags == ["standup"]
+    assert fake_client.messages.create.call_args.kwargs["max_tokens"] == 4096
 
 
 def _fake_urlopen_response(payload: dict):

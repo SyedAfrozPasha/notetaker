@@ -64,12 +64,26 @@ def summarize_transcript(
         return provider.summarize(chunks[0])
     partials = [provider.summarize(chunk) for chunk in chunks]
     combined_text = "\n\n".join(p.text for p in partials)
-    reduced = provider.summarize(combined_text)
+    if estimate_tokens(combined_text) > chunk_token_limit:
+        reduced = summarize_transcript(combined_text, provider, chunk_token_limit)
+    else:
+        reduced = provider.summarize(combined_text)
     tags = sorted({tag for p in partials for tag in p.tags} | set(reduced.tags))
     action_items = _dedupe_preserve_order(
         [item for p in partials for item in p.action_items] + reduced.action_items
     )
     return Summary(text=reduced.text, action_items=action_items, tags=tags)
+
+
+def _parse_summary_json(raw: str) -> dict:
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines)
+    return json.loads(text)
 
 
 SUMMARY_PROMPT_TEMPLATE = """You will be given a meeting transcript. Respond with ONLY a JSON object \
@@ -89,12 +103,12 @@ class ClaudeProvider:
     def summarize(self, transcript: str) -> Summary:
         response = self._client.messages.create(
             model=self._model,
-            max_tokens=1024,
+            max_tokens=4096,
             messages=[
                 {"role": "user", "content": SUMMARY_PROMPT_TEMPLATE.format(transcript=transcript)}
             ],
         )
-        data = json.loads(response.content[0].text)
+        data = _parse_summary_json(response.content[0].text)
         return Summary(
             text=data["text"],
             action_items=data.get("action_items", []),
@@ -133,7 +147,7 @@ class AppleLocalProvider:
         except urllib.error.URLError as exc:
             raise AppleLocalError(f"Could not reach apfel at {self._base_url}: {exc}") from exc
         raw = data["choices"][0]["message"]["content"]
-        parsed = json.loads(raw)
+        parsed = _parse_summary_json(raw)
         return Summary(
             text=parsed["text"],
             action_items=parsed.get("action_items", []),
