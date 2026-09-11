@@ -129,3 +129,93 @@ def test_start_recovers_from_corrupt_session_file(monkeypatch, tmp_path):
     session = json.loads(session_file.read_text())
     assert session["pid"] == 54321
     assert session["title"] == "Weekly"
+
+
+def test_stop_fails_with_no_active_session(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.SESSION_FILE", tmp_path / "current_session.json")
+    result = runner.invoke(app, ["stop"])
+    assert result.exit_code == 1
+    assert "no active session" in result.output
+
+
+def test_stop_salvages_transcript_and_writes_note(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n[00:00:07] world\n")
+
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {
+                "pid": 999999,
+                "title": "Standup",
+                "start_time": "2026-09-11T10:00:00",
+                "session_dir": str(session_dir),
+            }
+        )
+    )
+
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
+    monkeypatch.setattr("notetaker.cli._pid_alive", lambda pid: False)
+    monkeypatch.setattr(
+        "notetaker.cli.load_config",
+        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+    )
+
+    from notetaker.summarizer import Summary
+
+    monkeypatch.setattr("notetaker.cli.get_provider", lambda config: object())
+    monkeypatch.setattr(
+        "notetaker.cli.summarize_transcript",
+        lambda transcript, provider: Summary(text="summary text", action_items=["a"], tags=["t"]),
+    )
+
+    result = runner.invoke(app, ["stop"])
+
+    assert result.exit_code == 0
+    assert not session_file.exists()
+    assert not session_dir.exists()
+    saved_notes = list(notes_dir.glob("*.md"))
+    assert len(saved_notes) == 1
+    assert "summary text" in saved_notes[0].read_text()
+
+
+def test_stop_saves_note_with_error_when_summarization_fails(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n")
+
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {
+                "pid": 999999,
+                "title": "Standup",
+                "start_time": "2026-09-11T10:00:00",
+                "session_dir": str(session_dir),
+            }
+        )
+    )
+
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
+    monkeypatch.setattr("notetaker.cli._pid_alive", lambda pid: False)
+    monkeypatch.setattr(
+        "notetaker.cli.load_config",
+        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+    )
+    monkeypatch.setattr("notetaker.cli.get_provider", lambda config: object())
+
+    def raise_error(transcript, provider):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("notetaker.cli.summarize_transcript", raise_error)
+
+    result = runner.invoke(app, ["stop"])
+
+    assert result.exit_code == 0
+    saved_notes = list(notes_dir.glob("*.md"))
+    assert len(saved_notes) == 1
+    assert "Summarization failed" in saved_notes[0].read_text()
+    assert "hello" in saved_notes[0].read_text()

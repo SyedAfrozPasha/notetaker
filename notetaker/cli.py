@@ -1,15 +1,19 @@
 import json
 import os
+import shutil
+import signal
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
 import typer
 
 from notetaker.config import CONFIG_DIR, load_config, write_default_config
+from notetaker.notes import write_note
 from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
-from notetaker.summarizer import check_apple_local_preflight
+from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript
 from notetaker.transcriber import Transcriber
 
 app = typer.Typer()
@@ -119,3 +123,44 @@ def start(title: str):
         )
     )
     typer.echo(f"Recording started: {title}")
+
+
+@app.command()
+def stop():
+    if not SESSION_FILE.exists():
+        typer.echo("error: no active session.", err=True)
+        raise typer.Exit(1)
+
+    session = json.loads(SESSION_FILE.read_text())
+    pid = session["pid"]
+    session_dir = Path(session["session_dir"])
+
+    if _pid_alive(pid):
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(30):
+            if not _pid_alive(pid):
+                break
+            time.sleep(1)
+
+    transcript_path = session_dir / "transcript.txt"
+    transcript = transcript_path.read_text() if transcript_path.exists() else ""
+    transcript_lines = transcript.splitlines()
+
+    start_time = datetime.fromisoformat(session["start_time"])
+    duration_minutes = int((datetime.now() - start_time).total_seconds() // 60)
+
+    config = load_config()
+    try:
+        provider = get_provider(config)
+        summary = summarize_transcript(transcript, provider)
+    except Exception as exc:
+        summary = Summary(text=f"Summarization failed: {exc}", action_items=[], tags=[])
+
+    note_path = write_note(
+        config.notes_dir, session["title"], start_time, duration_minutes, summary, transcript_lines
+    )
+
+    shutil.rmtree(session_dir, ignore_errors=True)
+    SESSION_FILE.unlink()
+
+    typer.echo(f"Saved note: {note_path}")
