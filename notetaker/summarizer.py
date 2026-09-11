@@ -1,4 +1,5 @@
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -8,6 +9,8 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import anthropic
+
+from notetaker.config import Config, ConfigError
 
 
 @dataclass
@@ -166,3 +169,14 @@ def check_apple_local_preflight() -> list[str]:
         )
 
     return problems
+
+
+def get_provider(config: Config) -> Provider:
+    if config.ai_provider == "claude":
+        api_key = os.environ.get(config.api_key_env)
+        if not api_key:
+            raise ConfigError(f"Environment variable {config.api_key_env} is not set.")
+        return ClaudeProvider(api_key=api_key, model=config.ai_model)
+    if config.ai_provider == "apple_local":
+        return AppleLocalProvider(model=config.ai_model)
+    raise ConfigError(f"Unknown ai_provider '{config.ai_provider}'.")

@@ -171,3 +171,38 @@ def test_check_apple_local_preflight_passes_when_everything_ready(monkeypatch):
 
     monkeypatch.setattr("notetaker.summarizer.urllib.request.urlopen", lambda req, timeout=2: FakeCtx())
     assert check_apple_local_preflight() == []
+
+
+# Tests for get_provider
+import pytest
+
+from notetaker.config import Config, ConfigError
+from notetaker.summarizer import AppleLocalProvider, ClaudeProvider, get_provider
+
+
+def test_get_provider_claude_reads_env_key(monkeypatch):
+    monkeypatch.setenv("MY_KEY", "secret")
+    config = Config(
+        notes_dir=None, whisper_model="base.en", ai_provider="claude",
+        ai_model="claude-sonnet-5", api_key_env="MY_KEY",
+    )
+    provider = get_provider(config)
+    assert isinstance(provider, ClaudeProvider)
+
+
+def test_get_provider_claude_missing_env_key_raises(monkeypatch):
+    monkeypatch.delenv("MISSING_KEY", raising=False)
+    config = Config(
+        notes_dir=None, whisper_model="base.en", ai_provider="claude",
+        ai_model="claude-sonnet-5", api_key_env="MISSING_KEY",
+    )
+    with pytest.raises(ConfigError):
+        get_provider(config)
+
+
+def test_get_provider_apple_local():
+    config = Config(
+        notes_dir=None, whisper_model="base.en", ai_provider="apple_local",
+        ai_model="apple-fm", api_key_env="UNUSED",
+    )
+    assert isinstance(get_provider(config), AppleLocalProvider)
