@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This repository currently contains only a design spec — no implementation exists yet. Before writing any code here, read the full design at [docs/superpowers/specs/2026-09-11-notetaker-cli-design.md](docs/superpowers/specs/2026-09-11-notetaker-cli-design.md); it is the source of truth for architecture, file layout, and scope decisions until real code supersedes it. Once implementation begins, update this file with actual build/lint/test commands and keep the architecture summary below in sync with the code rather than the spec.
+Implemented and tested — see `notetaker/` for the code and `tests/` for the suite (58 tests, including one real-model integration test). The original design spec ([docs/superpowers/specs/2026-09-11-notetaker-cli-design.md](docs/superpowers/specs/2026-09-11-notetaker-cli-design.md)) is still useful background on the "Approach A vs B vs C" rationale, but the code and this file are now the source of truth — keep the architecture summary below in sync with the code, not the spec, when either changes. `CONTEXT.md` and `docs/adr/` capture domain terms and key decisions made during implementation.
 
 ## What this project is
 
@@ -32,3 +32,10 @@ Key design decisions worth knowing before changing this system:
 - A crashed recorder or a failed AI summarization call must never lose the meeting record — partial transcripts are always salvaged and saved, with the summary section noting the failure if summarization fails.
 - The AI provider abstraction is intentionally minimal (one interface, one implementation) — it is a clean seam, not a plugin-loading system. Don't build out plugin discovery/config for it until a second provider is actually needed.
 - macOS only for the MVP; the audio capture layer is the platform-specific piece if cross-platform support is added later.
+
+## Development
+
+- `./install.sh` — one-time setup (creates `.venv`, installs pinned deps).
+- `.venv/bin/pytest -q` — full test suite.
+- `.venv/bin/pytest -m "not integration" -q` — fast suite only, skips the network-dependent faster-whisper integration test.
+- Use `.venv/bin/python` / `.venv/bin/pytest` explicitly; there is no ambient install.
