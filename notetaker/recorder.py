@@ -70,10 +70,14 @@ def run_recorder(
     index = 0
     while not stop_flag["stop"]:
         chunk_path = chunks_dir / f"chunk_{index:05d}.wav"
-        capture_fn(device_index, chunk_seconds, chunk_path)
-        line = transcriber.transcribe_chunk(chunk_path, elapsed)
-        if line:
-            append_transcript_line(transcript_path, line)
+        try:
+            capture_fn(device_index, chunk_seconds, chunk_path)
+            line = transcriber.transcribe_chunk(chunk_path, elapsed)
+            if line:
+                append_transcript_line(transcript_path, line)
+        except Exception as exc:
+            append_transcript_line(transcript_path, f"[recording stopped due to error: {exc}]")
+            break
         elapsed += chunk_seconds
         index += 1
 

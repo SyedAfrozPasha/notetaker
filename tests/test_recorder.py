@@ -56,3 +56,26 @@ def test_run_recorder_stops_on_sigterm_and_appends_transcript(tmp_path):
     assert "hello" in transcript
     assert "world" in transcript
     assert call_count["n"] == 2
+
+
+def test_run_recorder_logs_error_and_returns_when_capture_raises(tmp_path):
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    call_count = {"n": 0}
+
+    def flaky_capture(device_index, duration_seconds, out_path, sample_rate=16000):
+        call_count["n"] += 1
+        if call_count["n"] >= 2:
+            raise RuntimeError("device removed")
+        out_path.write_bytes(b"")
+
+    transcriber = FakeTranscriber(["[00:00:00] hello"])
+
+    # Should not raise, even though flaky_capture raises on its second call.
+    run_recorder(session_dir, device_index=0, transcriber=transcriber, chunk_seconds=10, capture_fn=flaky_capture)
+
+    transcript = (session_dir / "transcript.txt").read_text()
+    assert "hello" in transcript
+    assert "recording stopped due to error" in transcript
+    assert "device removed" in transcript
+    assert call_count["n"] == 2
