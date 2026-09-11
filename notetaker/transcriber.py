@@ -28,7 +28,11 @@ class Transcriber:
         )
 
     def transcribe_chunk(self, wav_path: Path, elapsed_seconds: float) -> str:
-        segments, _ = self._model.transcribe(str(wav_path))
+        # language="en" avoids faster-whisper's language auto-detection, which
+        # crashes (ValueError: max() arg is an empty sequence) when vad_filter
+        # strips a fully-silent chunk down to zero audio frames. Meetings this
+        # tool targets are English (the default whisper_model is "base.en").
+        segments, _ = self._model.transcribe(str(wav_path), vad_filter=True, language="en")
         text = " ".join(segment.text.strip() for segment in segments).strip()
         if not text:
             return ""

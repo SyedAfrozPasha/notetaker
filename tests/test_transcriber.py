@@ -20,7 +20,7 @@ class FakeWhisperModel:
     def __init__(self, segments_text):
         self._segments_text = segments_text
 
-    def transcribe(self, wav_path):
+    def transcribe(self, wav_path, vad_filter=False, language=None):
         segments = [SimpleNamespace(text=t) for t in self._segments_text]
         return segments, None
 

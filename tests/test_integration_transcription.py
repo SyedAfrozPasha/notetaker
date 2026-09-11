@@ -11,7 +11,6 @@ FIXTURE = Path(__file__).parent / "fixtures" / "silence.wav"
 def test_transcriber_processes_real_wav_without_error():
     transcriber = Transcriber("tiny")
     line = transcriber.transcribe_chunk(FIXTURE, elapsed_seconds=0)
-    # Silence should produce no transcribable speech — the assertion is that
-    # this doesn't raise and returns a string (possibly empty), proving the
-    # faster-whisper wiring (model load, file read, segment iteration) works.
-    assert isinstance(line, str)
+    # Silence should produce no transcribable speech. With vad_filter=True,
+    # faster-whisper should not hallucinate text (e.g. "you") on silence.
+    assert line == ""
