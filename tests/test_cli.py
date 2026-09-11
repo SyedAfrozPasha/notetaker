@@ -95,6 +95,7 @@ def test_start_spawns_recorder_and_writes_session_file(monkeypatch, tmp_path):
         lambda: Config(tmp_path, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
     )
     fake_proc = MagicMock(pid=12345)
+    fake_proc.poll.return_value = None
     monkeypatch.setattr("notetaker.cli.subprocess.Popen", lambda *a, **k: fake_proc)
 
     result = runner.invoke(app, ["start", "Standup"])
@@ -120,6 +121,7 @@ def test_start_recovers_from_corrupt_session_file(monkeypatch, tmp_path):
         lambda: Config(tmp_path, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
     )
     fake_proc = MagicMock(pid=54321)
+    fake_proc.poll.return_value = None
     monkeypatch.setattr("notetaker.cli.subprocess.Popen", lambda *a, **k: fake_proc)
 
     result = runner.invoke(app, ["start", "Weekly"])
@@ -131,11 +133,84 @@ def test_start_recovers_from_corrupt_session_file(monkeypatch, tmp_path):
     assert session["title"] == "Weekly"
 
 
+def test_start_fails_when_recorder_exits_immediately(monkeypatch, tmp_path):
+    session_file = tmp_path / "current_session.json"
+    monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
+    monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.cli.find_blackhole_device_index", lambda: 2)
+    monkeypatch.setattr(
+        "notetaker.cli.load_config",
+        lambda: Config(tmp_path, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+    )
+    fake_proc = MagicMock(pid=99999)
+    fake_proc.poll.return_value = 0
+    monkeypatch.setattr("notetaker.cli.subprocess.Popen", lambda *a, **k: fake_proc)
+    monkeypatch.setattr("notetaker.cli.time.sleep", lambda s: None)
+
+    result = runner.invoke(app, ["start", "Standup"])
+
+    assert result.exit_code == 1
+    assert "recorder failed to start" in result.output
+    assert not session_file.exists()
+
+
 def test_stop_fails_with_no_active_session(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.cli.SESSION_FILE", tmp_path / "current_session.json")
     result = runner.invoke(app, ["stop"])
     assert result.exit_code == 1
     assert "no active session" in result.output
+
+
+def test_stop_fails_cleanly_on_corrupt_session_file(monkeypatch, tmp_path):
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text("{not valid json")
+    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
+
+    result = runner.invoke(app, ["stop"])
+
+    assert result.exit_code == 1
+    assert "corrupt or unreadable" in result.output
+    assert str(session_file) in result.output
+
+
+def test_stop_skips_provider_call_when_transcript_empty(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    # no transcript.txt written — simulates a recorder that crashed at startup
+
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {
+                "pid": 999999,
+                "title": "Standup",
+                "start_time": "2026-09-11T10:00:00",
+                "session_dir": str(session_dir),
+            }
+        )
+    )
+
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
+    monkeypatch.setattr("notetaker.cli._pid_alive", lambda pid: False)
+    monkeypatch.setattr(
+        "notetaker.cli.load_config",
+        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+    )
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("get_provider should not be called for an empty transcript")
+
+    monkeypatch.setattr("notetaker.cli.get_provider", fail_if_called)
+    monkeypatch.setattr("notetaker.cli.summarize_transcript", fail_if_called)
+
+    result = runner.invoke(app, ["stop"])
+
+    assert result.exit_code == 0
+    saved_notes = list(notes_dir.glob("*.md"))
+    assert len(saved_notes) == 1
+    assert "No audio was captured" in saved_notes[0].read_text()
 
 
 def test_stop_salvages_transcript_and_writes_note(monkeypatch, tmp_path):

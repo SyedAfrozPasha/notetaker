@@ -108,10 +108,23 @@ def start(title: str):
     session_dir = CONFIG_DIR / "sessions" / start_time.strftime("%Y%m%d-%H%M%S")
     session_dir.mkdir(parents=True, exist_ok=True)
 
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "notetaker.recorder", str(session_dir), str(device_index), config.whisper_model],
-        start_new_session=True,
-    )
+    log_path = session_dir / "recorder.log"
+    log_file = open(log_path, "w")
+    try:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "notetaker.recorder", str(session_dir), str(device_index), config.whisper_model],
+            start_new_session=True,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+        )
+    finally:
+        log_file.close()
+
+    time.sleep(0.5)
+    if proc.poll() is not None:
+        typer.echo(f"error: recorder failed to start — see {log_path} for details", err=True)
+        raise typer.Exit(1)
+
     SESSION_FILE.write_text(
         json.dumps(
             {
@@ -131,9 +144,18 @@ def stop():
         typer.echo("error: no active session.", err=True)
         raise typer.Exit(1)
 
-    session = json.loads(SESSION_FILE.read_text())
-    pid = session["pid"]
-    session_dir = Path(session["session_dir"])
+    try:
+        session = json.loads(SESSION_FILE.read_text())
+        pid = session["pid"]
+        session_dir = Path(session["session_dir"])
+    except (json.JSONDecodeError, KeyError, OSError):
+        typer.echo(
+            f"error: session file at {SESSION_FILE} is corrupt or unreadable. "
+            f"Check ~/.notetaker/sessions/ manually for a salvageable transcript, "
+            f"then remove {SESSION_FILE} to reset.",
+            err=True,
+        )
+        raise typer.Exit(1)
 
     if _pid_alive(pid):
         os.kill(pid, signal.SIGTERM)
@@ -150,11 +172,14 @@ def stop():
     duration_minutes = int((datetime.now() - start_time).total_seconds() // 60)
 
     config = load_config()
-    try:
-        provider = get_provider(config)
-        summary = summarize_transcript(transcript, provider)
-    except Exception as exc:
-        summary = Summary(text=f"Summarization failed: {exc}", action_items=[], tags=[])
+    if not transcript.strip():
+        summary = Summary(text="No audio was captured for this session.", action_items=[], tags=[])
+    else:
+        try:
+            provider = get_provider(config)
+            summary = summarize_transcript(transcript, provider)
+        except Exception as exc:
+            summary = Summary(text=f"Summarization failed: {exc}", action_items=[], tags=[])
 
     note_path = write_note(
         config.notes_dir, session["title"], start_time, duration_minutes, summary, transcript_lines
