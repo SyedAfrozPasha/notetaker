@@ -37,8 +37,8 @@ Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally 
    - **Claude (default, cloud):** export `ANTHROPIC_API_KEY` in your shell profile.
    - **Apple Foundation Models (opt-in, fully local, no API key):** install
      [`apfel`](https://github.com/Arthur-Ficial/apfel) (`brew install apfel`), start it
-     as a background service (`brew services start apfel`), and set `ai_provider:
-     apple_local` in `~/.notetaker/config.yaml`. Requires macOS 26+, Apple Silicon, and
+     as a background service (`brew services start apfel`), and set both `ai_provider:
+     apple_local` and `ai_model: apple-fm` in `~/.notetaker/config.yaml`. Requires macOS 26+, Apple Silicon, and
      Apple Intelligence enabled in System Settings.
 
 5. Run setup checks and download the transcription model:
@@ -62,3 +62,6 @@ This tool captures system audio directly — Teams (or any other meeting app) ha
 it's happening and will not show its own "this meeting is being recorded" indicator to
 other participants. `notetaker start` prints a reminder each time, but it's on you to let
 participants know per your organization's policy and local law.
+
+**First run note:** macOS will prompt for microphone access to read the BlackHole device
+when you first run `notetaker start` — please allow it for recording to work.
