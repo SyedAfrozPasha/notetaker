@@ -38,7 +38,7 @@ Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally 
    - **Apple Foundation Models (opt-in, fully local, no API key):** install
      [`apfel`](https://github.com/Arthur-Ficial/apfel) (`brew install apfel`), start it
      as a background service (`brew services start apfel`), and set both `ai_provider:
-     apple_local` and `ai_model: apple-fm` in `~/.notetaker/config.yaml`. Requires macOS 26+, Apple Silicon, and
+     apple_local` and `ai_model: apple-foundationmodel` in `~/.notetaker/config.yaml`. Requires macOS 26+, Apple Silicon, and
      Apple Intelligence enabled in System Settings.
 
 5. Run setup checks and download the transcription model:

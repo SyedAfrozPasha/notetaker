@@ -200,10 +200,13 @@ def test_check_apple_local_preflight_passes_when_everything_ready(monkeypatch):
     monkeypatch.setattr("notetaker.summarizer.platform.system", lambda: "Darwin")
     monkeypatch.setattr("notetaker.summarizer.platform.mac_ver", lambda: ("26.0", ("", "", ""), ""))
     monkeypatch.setattr("notetaker.summarizer.shutil.which", lambda name: "/usr/local/bin/brew")
-    monkeypatch.setattr(
-        "notetaker.summarizer.subprocess.run",
-        lambda *a, **k: sp.CompletedProcess(a, returncode=0),
-    )
+
+    def fake_run(cmd, **kwargs):
+        if cmd[-1] == "--model-info":
+            return sp.CompletedProcess(cmd, returncode=0, stdout="available:  yes\n")
+        return sp.CompletedProcess(cmd, returncode=0)
+
+    monkeypatch.setattr("notetaker.summarizer.subprocess.run", fake_run)
 
     class FakeCtx:
         def __enter__(self):
@@ -214,6 +217,34 @@ def test_check_apple_local_preflight_passes_when_everything_ready(monkeypatch):
 
     monkeypatch.setattr("notetaker.summarizer.urllib.request.urlopen", lambda req, timeout=2: FakeCtx())
     assert check_apple_local_preflight() == []
+
+
+def test_check_apple_local_preflight_flags_model_not_available(monkeypatch):
+    import subprocess as sp
+
+    monkeypatch.setattr("notetaker.summarizer.platform.system", lambda: "Darwin")
+    monkeypatch.setattr("notetaker.summarizer.platform.mac_ver", lambda: ("26.0", ("", "", ""), ""))
+    monkeypatch.setattr("notetaker.summarizer.shutil.which", lambda name: "/usr/local/bin/brew")
+
+    def fake_run(cmd, **kwargs):
+        if cmd[-1] == "--model-info":
+            return sp.CompletedProcess(
+                cmd, returncode=0, stdout="available:  no (Apple Intelligence not enabled)\n"
+            )
+        return sp.CompletedProcess(cmd, returncode=0)
+
+    monkeypatch.setattr("notetaker.summarizer.subprocess.run", fake_run)
+
+    class FakeCtx:
+        def __enter__(self):
+            return io.BytesIO(b"{}")
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr("notetaker.summarizer.urllib.request.urlopen", lambda req, timeout=2: FakeCtx())
+    problems = check_apple_local_preflight()
+    assert any("Apple Intelligence" in p for p in problems)
 
 
 # Tests for get_provider
@@ -246,6 +277,6 @@ def test_get_provider_claude_missing_env_key_raises(monkeypatch):
 def test_get_provider_apple_local():
     config = Config(
         notes_dir=None, whisper_model="base.en", ai_provider="apple_local",
-        ai_model="apple-fm", api_key_env="UNUSED",
+        ai_model="apple-foundationmodel", api_key_env="UNUSED",
     )
     assert isinstance(get_provider(config), AppleLocalProvider)

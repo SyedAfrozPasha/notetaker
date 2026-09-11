@@ -47,7 +47,7 @@ def test_init_reports_apple_local_problems(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
     monkeypatch.setattr(
         "notetaker.cli.load_config",
-        lambda: Config(tmp_path, "tiny", "apple_local", "apple-fm", "UNUSED"),
+        lambda: Config(tmp_path, "tiny", "apple_local", "apple-foundationmodel", "UNUSED"),
     )
     monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
     monkeypatch.setattr("notetaker.cli.check_apple_local_preflight", lambda: ["apfel is not installed"])

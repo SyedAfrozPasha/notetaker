@@ -124,7 +124,7 @@ class AppleLocalError(Exception):
 
 
 class AppleLocalProvider:
-    def __init__(self, base_url: str = APPLE_LOCAL_BASE_URL, model: str = "apple-fm"):
+    def __init__(self, base_url: str = APPLE_LOCAL_BASE_URL, model: str = "apple-foundationmodel"):
         self._base_url = base_url
         self._model = model
 
@@ -181,6 +181,20 @@ def check_apple_local_preflight() -> list[str]:
         problems.append(
             "apfel is installed but its service is not running. Run: brew services start apfel"
         )
+        return problems
+
+    model_info = subprocess.run(["apfel", "--model-info"], capture_output=True, text=True)
+    if model_info.returncode == 0:
+        for line in model_info.stdout.splitlines():
+            if "available:" in line and "yes" not in line:
+                reason = line.split("available:", 1)[1].strip()
+                problems.append(
+                    f"apple_local model is not available ({reason}). Enable Apple Intelligence "
+                    "in System Settings > Apple Intelligence & Siri, set Device Language and Siri "
+                    "Language to the same supported language, and wait for the on-device model "
+                    "to download (~3-4GB)."
+                )
+                break
 
     return problems
 
