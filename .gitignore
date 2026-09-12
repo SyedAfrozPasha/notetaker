@@ -24,3 +24,7 @@ htmlcov/
 # Editors
 .vscode/
 .idea/
+
+# Git worktrees (scratch workspaces for isolated feature work)
+.worktrees/
+.claude/worktrees/
