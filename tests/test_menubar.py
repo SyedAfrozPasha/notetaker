@@ -174,6 +174,31 @@ def test_on_toggle_shows_alert_when_start_fails(app, monkeypatch, tmp_path):
     assert "BlackHole is not active." in calls[0][1]
 
 
+def test_on_toggle_shows_alert_when_stop_fails(app, monkeypatch, tmp_path):
+    from datetime import datetime
+
+    info = service.SessionInfo(123, "Standup", datetime(2026, 9, 16, 10, 0, 0), tmp_path)
+
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: info)
+
+    def fail(info, config, config_dir):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("notetaker.menubar.service.stop_session", fail)
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.menubar.rumps.alert", lambda title, message: calls.append((title, message))
+    )
+
+    app._on_toggle(None)
+
+    assert len(calls) == 1
+    assert calls[0][0] == "Could not save the recording"
+    assert "disk full" in calls[0][1]
+
+
 def test_on_toggle_stops_and_notifies_when_recording(app, monkeypatch, tmp_path):
     from datetime import datetime
 
