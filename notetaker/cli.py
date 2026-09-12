@@ -1,4 +1,5 @@
 import typer
+from rich.console import Console
 
 from notetaker import service
 from notetaker.config import CONFIG_DIR, CONFIG_PATH, load_config
@@ -6,6 +7,7 @@ from notetaker.recorder import BlackHoleStatus
 from notetaker.service import ServiceError
 
 app = typer.Typer()
+console = Console()
 
 
 @app.callback(invoke_without_command=True)
@@ -51,17 +53,26 @@ def init():
 @app.command()
 def start(title: str):
     config = load_config()
-    try:
-        salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
-    except Exception as exc:
-        typer.echo(f"warning: could not recover a possibly crashed session: {exc}", err=True)
-        salvaged_path = None
+    with console.status("Starting recorder..."):
+        try:
+            salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
+            salvage_error = None
+        except Exception as exc:
+            salvaged_path = None
+            salvage_error = str(exc)
+        try:
+            info = service.start_session(title, config, CONFIG_DIR)
+            start_error = None
+        except ServiceError as exc:
+            info = None
+            start_error = str(exc)
+
+    if salvage_error is not None:
+        typer.echo(f"warning: could not recover a possibly crashed session: {salvage_error}", err=True)
     if salvaged_path is not None:
         typer.echo(f"Recovered a crashed session and saved it as a note: {salvaged_path}")
-    try:
-        info = service.start_session(title, config, CONFIG_DIR)
-    except ServiceError as exc:
-        typer.echo(f"error: {exc}", err=True)
+    if start_error is not None:
+        typer.echo(f"error: {start_error}", err=True)
         raise typer.Exit(1)
     typer.echo("macOS will ask for microphone access to read the BlackHole device — please allow it.")
     typer.echo(
@@ -79,7 +90,8 @@ def stop():
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1)
     config = load_config()
-    note_path = service.stop_session(info, config, CONFIG_DIR)
+    with console.status("Stopping recorder...") as status:
+        note_path = service.stop_session(info, config, CONFIG_DIR, on_phase=status.update)
     typer.echo(f"Saved note: {note_path}")
 
 

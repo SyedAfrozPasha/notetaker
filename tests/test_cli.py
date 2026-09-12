@@ -130,7 +130,9 @@ def test_stop_prints_note_path_on_success(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.cli.service.read_active_session", lambda config_dir: info)
     monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
     note_path = tmp_path / "notes" / "2026-09-11-standup.md"
-    monkeypatch.setattr("notetaker.cli.service.stop_session", lambda info, config, config_dir: note_path)
+    monkeypatch.setattr(
+        "notetaker.cli.service.stop_session", lambda info, config, config_dir, on_phase=None: note_path
+    )
 
     result = runner.invoke(app, ["stop"])
 
