@@ -100,3 +100,24 @@ def show(note_id: str):
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1)
     typer.echo(body)
+
+
+@app.command("set-api-key")
+def set_api_key(api_key: str):
+    config = load_config()
+    try:
+        service.save_provider_credential(config, api_key)
+    except ServiceError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"{config.api_key_env} saved to the macOS Keychain.")
+
+
+@app.command("show-api-key")
+def show_api_key():
+    config = load_config()
+    masked = service.get_masked_provider_credential(config)
+    if masked is None:
+        typer.echo(f"No credential stored for {config.api_key_env}.")
+    else:
+        typer.echo(masked)

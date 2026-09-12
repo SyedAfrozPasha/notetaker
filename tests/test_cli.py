@@ -173,3 +173,47 @@ def test_show_missing_note_fails(monkeypatch, tmp_path):
     result = runner.invoke(app, ["show", "nonexistent"])
 
     assert result.exit_code == 1
+
+
+def test_set_api_key_reports_service_error(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+
+    def fail(config, api_key):
+        raise ServiceError("That API key was rejected by Anthropic's API — check it and try again.")
+
+    monkeypatch.setattr("notetaker.cli.service.save_provider_credential", fail)
+
+    result = runner.invoke(app, ["set-api-key", "sk-ant-bad-key"])
+
+    assert result.exit_code == 1
+    assert "rejected by Anthropic's API" in result.output
+
+
+def test_set_api_key_prints_confirmation_on_success(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.save_provider_credential", lambda config, api_key: None)
+
+    result = runner.invoke(app, ["set-api-key", "sk-ant-good-key"])
+
+    assert result.exit_code == 0
+    assert "ANTHROPIC_API_KEY saved to the macOS Keychain." in result.output
+
+
+def test_show_api_key_prints_masked_value(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.get_masked_provider_credential", lambda config: "sk-ant••••1234")
+
+    result = runner.invoke(app, ["show-api-key"])
+
+    assert result.exit_code == 0
+    assert "sk-ant••••1234" in result.output
+
+
+def test_show_api_key_reports_when_unset(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.get_masked_provider_credential", lambda config: None)
+
+    result = runner.invoke(app, ["show-api-key"])
+
+    assert result.exit_code == 0
+    assert "No credential stored for ANTHROPIC_API_KEY." in result.output
