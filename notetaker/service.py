@@ -49,7 +49,7 @@ def start_session(title: str, config: Config, config_dir: Path) -> SessionInfo:
             raw = json.loads(session_file.read_text())
             if pid_alive(raw["pid"]):
                 raise ServiceError("a session is already running. Run `notetaker stop` first.")
-        except (json.JSONDecodeError, KeyError, OSError):
+        except (ValueError, KeyError, TypeError, OSError):
             pass
 
     status = check_blackhole()
@@ -102,7 +102,7 @@ def read_active_session(config_dir: Path) -> SessionInfo:
             start_time=datetime.fromisoformat(raw["start_time"]),
             session_dir=Path(raw["session_dir"]),
         )
-    except (json.JSONDecodeError, KeyError, OSError) as exc:
+    except (ValueError, KeyError, TypeError, OSError) as exc:
         raise ServiceError(
             f"session file at {session_file} is corrupt or unreadable. "
             f"Check ~/.notetaker/sessions/ manually for a salvageable transcript, "
@@ -140,7 +140,7 @@ def stop_session(info: SessionInfo, config: Config, config_dir: Path) -> Path:
     )
 
     shutil.rmtree(info.session_dir, ignore_errors=True)
-    session_file.unlink()
+    session_file.unlink(missing_ok=True)
 
     return note_path
 

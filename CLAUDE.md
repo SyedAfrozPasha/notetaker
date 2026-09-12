@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-Implemented and tested — see `notetaker/` for the code and `tests/` for the suite (58 tests, including one real-model integration test). The original design spec ([docs/superpowers/specs/2026-09-11-notetaker-cli-design.md](docs/superpowers/specs/2026-09-11-notetaker-cli-design.md)) is still useful background on the "Approach A vs B vs C" rationale, but the code and this file are now the source of truth — keep the architecture summary below in sync with the code, not the spec, when either changes. `CONTEXT.md` and `docs/adr/` capture domain terms and key decisions made during implementation.
+Implemented and tested — see `notetaker/` for the code and `tests/` for the suite (75 tests, including one real-model integration test). The original design spec ([docs/superpowers/specs/2026-09-11-notetaker-cli-design.md](docs/superpowers/specs/2026-09-11-notetaker-cli-design.md)) is still useful background on the "Approach A vs B vs C" rationale, but the code and this file are now the source of truth — keep the architecture summary below in sync with the code, not the spec, when either changes. `CONTEXT.md` and `docs/adr/` capture domain terms and key decisions made during implementation.
 
 ## What this project is
 
