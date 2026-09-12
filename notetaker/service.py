@@ -54,6 +54,45 @@ def pid_alive(pid: int) -> bool:
     return True
 
 
+def _claim_session_file(config_dir: Path) -> tuple[Path, Path] | None:
+    """Atomically claims current_session.json so no other finalizer
+    (stop_session, cancel_session, check_and_salvage_orphan) can act on the
+    same session concurrently. Returns (session_file, claim_path), or None
+    if there was nothing to claim — someone else already claimed or removed
+    it first.
+    """
+    session_file = session_file_path(config_dir)
+    claim_path = session_file.with_suffix(".salvaging")
+    try:
+        session_file.rename(claim_path)
+    except FileNotFoundError:
+        return None
+    return session_file, claim_path
+
+
+def _release_claim(session_file: Path, claim_path: Path, *, restore: bool) -> None:
+    """Releases a claim taken by _claim_session_file. On success (restore=False)
+    the claim is simply dropped. On failure (restore=False is not passed —
+    restore=True) the claim is put back under its original name so a future
+    attempt can retry — UNLESS a new session has since been started at that
+    path (session_file now exists again), in which case restoring would
+    silently clobber that live session's pointer. In that case the stale
+    claim is just dropped instead; the underlying session directory this
+    claim pointed to is untouched on disk (stop_session/cancel_session only
+    delete it on success), so it remains manually recoverable.
+    """
+    if not restore:
+        claim_path.unlink(missing_ok=True)
+        return
+    if session_file.exists():
+        claim_path.unlink(missing_ok=True)
+    else:
+        try:
+            claim_path.rename(session_file)
+        except FileNotFoundError:
+            pass
+
+
 def start_session(title: str, config: Config, config_dir: Path) -> SessionInfo:
     session_file = session_file_path(config_dir)
     if session_file.exists():
@@ -148,8 +187,24 @@ def stop_session(
     end_time: datetime | None = None,
     on_phase: Callable[[str], None] | None = None,
 ) -> Path:
-    session_file = session_file_path(config_dir)
+    claim = _claim_session_file(config_dir)
+    if claim is None:
+        raise ServiceError("no active session.")
+    session_file, claim_path = claim
+    try:
+        return _finalize_stop(info, config, claim_path, end_time=end_time, on_phase=on_phase)
+    except Exception:
+        _release_claim(session_file, claim_path, restore=True)
+        raise
 
+
+def _finalize_stop(
+    info: SessionInfo,
+    config: Config,
+    claim_path: Path,
+    end_time: datetime | None = None,
+    on_phase: Callable[[str], None] | None = None,
+) -> Path:
     if on_phase:
         on_phase("Stopping recorder...")
     _terminate_recorder(info.pid)
@@ -173,18 +228,23 @@ def stop_session(
     transcript_sidecar_path.write_text(transcript)
 
     shutil.rmtree(info.session_dir, ignore_errors=True)
-    session_file.unlink(missing_ok=True)
+    claim_path.unlink(missing_ok=True)
 
     return note_path
 
 
 def cancel_session(info: SessionInfo, config_dir: Path) -> None:
-    session_file = session_file_path(config_dir)
-
-    _terminate_recorder(info.pid)
-
-    shutil.rmtree(info.session_dir, ignore_errors=True)
-    session_file.unlink(missing_ok=True)
+    claim = _claim_session_file(config_dir)
+    if claim is None:
+        raise ServiceError("no active session.")
+    session_file, claim_path = claim
+    try:
+        _terminate_recorder(info.pid)
+        shutil.rmtree(info.session_dir, ignore_errors=True)
+        claim_path.unlink(missing_ok=True)
+    except Exception:
+        _release_claim(session_file, claim_path, restore=True)
+        raise
 
 
 def list_all_notes(config: Config) -> list[NoteMeta]:
@@ -265,13 +325,13 @@ def ensure_whisper_model(config: Config) -> None:
 
 def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:
     """Detects and salvages an Orphaned session: a Session whose Recorder died
-    without a matching `stop` (see CONTEXT.md). Safe for concurrent callers
-    (e.g. a menu bar app's poller and a CLI `start` running at the same
-    moment): the session file is atomically renamed to claim it before
-    salvaging, so a second caller's claim attempt finds nothing to rename and
-    returns None instead of double-salvaging the same session. If salvaging
-    itself fails, the claim is released (the file restored to its original
-    name) so a future attempt can retry rather than losing the orphan.
+    without a matching `stop` (see CONTEXT.md). Uses the same claim as
+    `stop_session`/`cancel_session` (see `_claim_session_file`), so this
+    poller can never race a user-initiated stop or cancel that is still in
+    flight — whichever caller claims the session file first proceeds; the
+    other finds nothing to claim and returns/no-ops. If salvaging itself
+    fails, the claim is released so a future attempt can retry rather than
+    losing the orphan.
     """
     try:
         info = read_active_session(config_dir)
@@ -279,24 +339,20 @@ def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:
         return None
     if pid_alive(info.pid):
         return None
-    session_file = session_file_path(config_dir)
-    claim_path = session_file.with_suffix(".salvaging")
-    try:
-        session_file.rename(claim_path)
-    except FileNotFoundError:
+    claim = _claim_session_file(config_dir)
+    if claim is None:
         return None
+    session_file, claim_path = claim
     transcript_path = info.session_dir / "transcript.txt"
     if transcript_path.exists():
         end_time = datetime.fromtimestamp(transcript_path.stat().st_mtime)
     else:
         end_time = info.start_time
     try:
-        note_path = stop_session(info, config, config_dir, end_time=end_time)
+        return _finalize_stop(info, config, claim_path, end_time=end_time)
     except Exception:
-        claim_path.rename(session_file)
+        _release_claim(session_file, claim_path, restore=True)
         raise
-    claim_path.unlink(missing_ok=True)
-    return note_path
 
 
 def get_current_session_status(config_dir: Path) -> SessionInfo | None:

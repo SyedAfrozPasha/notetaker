@@ -13,6 +13,7 @@ from notetaker.recorder import BlackHoleStatus
 from notetaker.service import (
     ServiceError,
     SessionInfo,
+    _claim_session_file,
     cancel_session,
     check_and_salvage_orphan,
     get_current_session_status,
@@ -677,7 +678,7 @@ def test_check_and_salvage_orphan_returns_none_when_claim_loses_race(monkeypatch
     assert result is None
 
 
-def test_check_and_salvage_orphan_restores_session_file_when_stop_session_fails(monkeypatch, tmp_path):
+def test_check_and_salvage_orphan_restores_session_file_when_finalize_stop_fails(monkeypatch, tmp_path):
     session_dir = tmp_path / "sessions" / "20260911-100000"
     session_dir.mkdir(parents=True)
     session_file = tmp_path / "current_session.json"
@@ -694,10 +695,10 @@ def test_check_and_salvage_orphan_restores_session_file_when_stop_session_fails(
     notes_dir = tmp_path / "notes"
     monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
 
-    def raise_error(info, config, config_dir, end_time=None):
+    def raise_error(info, config, claim_path, end_time=None, on_phase=None):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr("notetaker.service.stop_session", raise_error)
+    monkeypatch.setattr("notetaker.service._finalize_stop", raise_error)
 
     with pytest.raises(RuntimeError, match="disk full"):
         check_and_salvage_orphan(
@@ -708,6 +709,32 @@ def test_check_and_salvage_orphan_restores_session_file_when_stop_session_fails(
     # file is back under its original name, not lost.
     assert session_file.exists()
     assert not session_file.with_suffix(".salvaging").exists()
+
+
+def test_cancel_session_raises_when_no_active_session(tmp_path):
+    with pytest.raises(ServiceError, match="no active session"):
+        cancel_session(_session_info(tmp_path), tmp_path)
+
+
+def test_check_and_salvage_orphan_does_not_double_salvage_during_stop_session(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (tmp_path / "current_session.json").write_text("{}")
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+
+    info = _session_info(session_dir)
+    config = Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
+
+    # Simulate check_and_salvage_orphan's poll landing in the middle of a
+    # stop_session that already claimed the file (recorder already dead,
+    # summarization API call still in flight).
+    claim = _claim_session_file(tmp_path)
+    assert claim is not None
+
+    result = check_and_salvage_orphan(config, tmp_path)
+
+    assert result is None
 
 
 def test_get_current_session_status_returns_none_when_no_session_file(tmp_path):
