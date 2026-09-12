@@ -1,5 +1,6 @@
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from notetaker import service
 from notetaker.config import CONFIG_DIR, CONFIG_PATH, load_config
@@ -91,7 +92,9 @@ def stop():
         raise typer.Exit(1)
     config = load_config()
     with console.status("Stopping recorder...") as status:
-        note_path = service.stop_session(info, config, CONFIG_DIR, on_phase=status.update)
+        note_path = service.stop_session(
+            info, config, CONFIG_DIR, on_phase=lambda phase: status.update(escape(phase))
+        )
     typer.echo(f"Saved note: {note_path}")
 
 

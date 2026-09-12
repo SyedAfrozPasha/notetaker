@@ -260,3 +260,29 @@ def test_resummarize_prints_confirmation_on_success(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     assert f"Resummarized note: {note_path}" in result.output
+
+
+def test_stop_escapes_rich_markup_in_phase_callback(monkeypatch, tmp_path):
+    from rich.markup import escape
+
+    info = SessionInfo(999999, "Standup", datetime.now(), tmp_path)
+    monkeypatch.setattr("notetaker.cli.service.read_active_session", lambda config_dir: info)
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    note_path = tmp_path / "notes" / "2026-09-11-standup.md"
+    captured = {}
+
+    def fake_stop_session(info, config, config_dir, on_phase=None):
+        captured["on_phase"] = on_phase
+        return note_path
+
+    monkeypatch.setattr("notetaker.cli.service.stop_session", fake_stop_session)
+
+    result = runner.invoke(app, ["stop"])
+
+    assert result.exit_code == 0
+    # Confirm the callback cli.py actually passed applies escape() before updating the spinner —
+    # calling it with bracketed text must not raise, and must route through escape().
+    calls = []
+    monkeypatch.setattr("rich.status.Status.update", lambda self, phase: calls.append(phase))
+    captured["on_phase"]("Summarizing [note]...")
+    assert calls == [escape("Summarizing [note]...")]
