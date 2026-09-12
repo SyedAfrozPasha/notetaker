@@ -116,6 +116,19 @@ class ClaudeProvider:
         )
 
 
+def validate_claude_api_key(api_key: str) -> bool:
+    """Confirms a Claude API key actually works via a minimal live API call.
+    Returns False for any failure (invalid key, network issue, etc.) — the
+    safe default for a "validate before save" flow.
+    """
+    try:
+        client = anthropic.Anthropic(api_key=api_key)
+        client.models.list()
+        return True
+    except Exception:
+        return False
+
+
 APPLE_LOCAL_BASE_URL = "http://localhost:11434/v1"
 
 

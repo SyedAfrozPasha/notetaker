@@ -280,3 +280,33 @@ def test_get_provider_apple_local():
         ai_model="apple-foundationmodel", api_key_env="UNUSED",
     )
     assert isinstance(get_provider(config), AppleLocalProvider)
+
+
+# Tests for validate_claude_api_key
+from notetaker.summarizer import validate_claude_api_key
+
+
+def test_validate_claude_api_key_returns_true_when_call_succeeds(monkeypatch):
+    class FakeModels:
+        def list(self):
+            return ["model-a"]
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.models = FakeModels()
+
+    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", FakeClient)
+    assert validate_claude_api_key("sk-ant-real-key") is True
+
+
+def test_validate_claude_api_key_returns_false_when_call_raises(monkeypatch):
+    class FakeModels:
+        def list(self):
+            raise RuntimeError("invalid x-api-key")
+
+    class FakeClient:
+        def __init__(self, api_key):
+            self.models = FakeModels()
+
+    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", FakeClient)
+    assert validate_claude_api_key("sk-ant-bad-key") is False
