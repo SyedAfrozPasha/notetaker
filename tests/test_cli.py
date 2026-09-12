@@ -217,3 +217,28 @@ def test_show_api_key_reports_when_unset(monkeypatch, tmp_path):
 
     assert result.exit_code == 0
     assert "No credential stored for ANTHROPIC_API_KEY." in result.output
+
+
+def test_resummarize_reports_service_error(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+
+    def fail(config, note_id):
+        raise ServiceError(f"no note found with id '{note_id}'.")
+
+    monkeypatch.setattr("notetaker.cli.service.resummarize_note", fail)
+
+    result = runner.invoke(app, ["resummarize", "nonexistent"])
+
+    assert result.exit_code == 1
+    assert "no note found" in result.output
+
+
+def test_resummarize_prints_confirmation_on_success(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    note_path = tmp_path / "notes" / "2026-09-11-standup.md"
+    monkeypatch.setattr("notetaker.cli.service.resummarize_note", lambda config, note_id: note_path)
+
+    result = runner.invoke(app, ["resummarize", "2026-09-11-standup"])
+
+    assert result.exit_code == 0
+    assert f"Resummarized note: {note_path}" in result.output

@@ -121,3 +121,14 @@ def show_api_key():
         typer.echo(f"No credential stored for {config.api_key_env}.")
     else:
         typer.echo(masked)
+
+
+@app.command()
+def resummarize(note_id: str):
+    config = load_config()
+    try:
+        note_path = service.resummarize_note(config, note_id)
+    except ServiceError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Resummarized note: {note_path}")
