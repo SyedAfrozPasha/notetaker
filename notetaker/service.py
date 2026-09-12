@@ -138,6 +138,8 @@ def stop_session(info: SessionInfo, config: Config, config_dir: Path) -> Path:
     note_path = write_note(
         config.notes_dir, info.title, info.start_time, duration_minutes, summary, transcript_lines
     )
+    transcript_sidecar_path = note_path.parent / f"{note_path.stem}.transcript.txt"
+    transcript_sidecar_path.write_text(transcript)
 
     shutil.rmtree(info.session_dir, ignore_errors=True)
     session_file.unlink(missing_ok=True)

@@ -271,3 +271,45 @@ def test_ensure_whisper_model_loads_transcriber(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.service.Transcriber", lambda model: calls.append(model))
     ensure_whisper_model(_config(tmp_path))
     assert calls == ["tiny"]
+
+
+def test_stop_session_writes_transcript_sidecar_alongside_note(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n[00:00:07] world\n")
+    (tmp_path / "current_session.json").write_text("{}")
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+    monkeypatch.setattr(
+        "notetaker.service.summarize_transcript",
+        lambda transcript, provider: Summary(text="summary text", action_items=[], tags=[]),
+    )
+
+    note_path = stop_session(
+        _session_info(session_dir),
+        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+        tmp_path,
+    )
+
+    sidecar_path = notes_dir / f"{note_path.stem}.transcript.txt"
+    assert sidecar_path.exists()
+    assert sidecar_path.read_text() == "[00:00:03] hello\n[00:00:07] world\n"
+
+
+def test_stop_session_writes_empty_transcript_sidecar_when_no_audio(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (tmp_path / "current_session.json").write_text("{}")
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+
+    note_path = stop_session(
+        _session_info(session_dir),
+        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+        tmp_path,
+    )
+
+    sidecar_path = notes_dir / f"{note_path.stem}.transcript.txt"
+    assert sidecar_path.exists()
+    assert sidecar_path.read_text() == ""
