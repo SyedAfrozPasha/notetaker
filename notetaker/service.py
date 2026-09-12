@@ -9,10 +9,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from notetaker.config import Config
+from notetaker.config import Config, write_default_config
 from notetaker.notes import NoteMeta, find_note_path, list_notes, read_note_body, write_note
 from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
-from notetaker.summarizer import Summary, get_provider, summarize_transcript
+from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript
+from notetaker.transcriber import Transcriber
 
 SESSION_FILE_NAME = "current_session.json"
 
@@ -153,3 +154,37 @@ def get_note_body(config: Config, note_id: str) -> str:
     if path is None:
         raise ServiceError(f"no note found with id '{note_id}'.")
     return read_note_body(path)
+
+
+@dataclass
+class SetupStatus:
+    blackhole: BlackHoleStatus
+    provider_ready: bool
+    provider_problems: list[str]
+
+
+def initialize_config(config_path: Path) -> bool:
+    return write_default_config(config_path)
+
+
+def check_setup(config: Config) -> SetupStatus:
+    blackhole = check_blackhole()
+    if config.ai_provider == "claude":
+        if not os.environ.get(config.api_key_env):
+            return SetupStatus(
+                blackhole=blackhole,
+                provider_ready=False,
+                provider_problems=[
+                    f"{config.api_key_env} is not set. Export it in your shell profile, "
+                    "then re-run `notetaker init`."
+                ],
+            )
+        return SetupStatus(blackhole=blackhole, provider_ready=True, provider_problems=[])
+    if config.ai_provider == "apple_local":
+        problems = check_apple_local_preflight()
+        return SetupStatus(blackhole=blackhole, provider_ready=not problems, provider_problems=problems)
+    raise ServiceError(f"Unknown ai_provider '{config.ai_provider}'.")
+
+
+def ensure_whisper_model(config: Config) -> None:
+    Transcriber(config.whisper_model)

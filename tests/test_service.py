@@ -222,3 +222,52 @@ def test_get_note_body_raises_for_missing_note(tmp_path):
     notes_dir.mkdir()
     with pytest.raises(ServiceError, match="no note found"):
         get_note_body(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "nonexistent")
+
+
+def test_initialize_config_writes_when_missing(tmp_path):
+    from notetaker.service import initialize_config
+    config_path = tmp_path / "config.yaml"
+    assert initialize_config(config_path) is True
+    assert config_path.exists()
+
+
+def test_initialize_config_skips_when_present(tmp_path):
+    from notetaker.service import initialize_config
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("existing: true\n")
+    assert initialize_config(config_path) is False
+    assert config_path.read_text() == "existing: true\n"
+
+
+def test_check_setup_reports_blackhole_and_ready_claude_provider(monkeypatch, tmp_path):
+    from notetaker.service import SetupStatus, check_setup
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
+    status = check_setup(_config(tmp_path))
+    assert status == SetupStatus(blackhole=BlackHoleStatus.ACTIVE, provider_ready=True, provider_problems=[])
+
+
+def test_check_setup_reports_missing_claude_api_key(monkeypatch, tmp_path):
+    from notetaker.service import check_setup
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    status = check_setup(_config(tmp_path))
+    assert status.provider_ready is False
+    assert "ANTHROPIC_API_KEY is not set" in status.provider_problems[0]
+
+
+def test_check_setup_reports_apple_local_problems(monkeypatch, tmp_path):
+    from notetaker.service import check_setup
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.check_apple_local_preflight", lambda: ["apfel is not installed"])
+    status = check_setup(Config(tmp_path, "tiny", "apple_local", "apple-foundationmodel", "UNUSED"))
+    assert status.provider_ready is False
+    assert status.provider_problems == ["apfel is not installed"]
+
+
+def test_ensure_whisper_model_loads_transcriber(monkeypatch, tmp_path):
+    from notetaker.service import ensure_whisper_model
+    calls = []
+    monkeypatch.setattr("notetaker.service.Transcriber", lambda model: calls.append(model))
+    ensure_whisper_model(_config(tmp_path))
+    assert calls == ["tiny"]
