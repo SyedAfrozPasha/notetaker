@@ -287,6 +287,22 @@ def test_get_provider_claude_missing_env_key_raises(monkeypatch):
         get_provider(config)
 
 
+def test_get_provider_claude_degrades_to_env_key_when_keychain_raises(monkeypatch):
+    from keyring.errors import KeyringError
+
+    def raise_keyring_error(key):
+        raise KeyringError("Keychain locked")
+
+    monkeypatch.setattr("notetaker.summarizer.get_provider_credential", raise_keyring_error)
+    monkeypatch.setenv("MY_KEY", "secret")
+    config = Config(
+        notes_dir=None, whisper_model="base.en", ai_provider="claude",
+        ai_model="claude-sonnet-5", api_key_env="MY_KEY",
+    )
+    provider = get_provider(config)
+    assert isinstance(provider, ClaudeProvider)
+
+
 def test_get_provider_apple_local():
     config = Config(
         notes_dir=None, whisper_model="base.en", ai_provider="apple_local",

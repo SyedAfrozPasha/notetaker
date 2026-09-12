@@ -199,6 +199,22 @@ def test_set_api_key_prints_confirmation_on_success(monkeypatch, tmp_path):
     assert "ANTHROPIC_API_KEY saved to the macOS Keychain." in result.output
 
 
+def test_set_api_key_prompts_for_hidden_input_when_argument_omitted(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+
+    calls = {}
+
+    def fake_save(config, api_key):
+        calls["api_key"] = api_key
+
+    monkeypatch.setattr("notetaker.cli.service.save_provider_credential", fake_save)
+
+    result = runner.invoke(app, ["set-api-key"], input="sk-ant-prompted-key\n")
+
+    assert result.exit_code == 0
+    assert calls["api_key"] == "sk-ant-prompted-key"
+
+
 def test_show_api_key_prints_masked_value(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
     monkeypatch.setattr("notetaker.cli.service.get_masked_provider_credential", lambda config: "sk-ant••••1234")

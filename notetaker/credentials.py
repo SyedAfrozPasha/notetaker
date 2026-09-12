@@ -21,6 +21,6 @@ def mask_credential(value: str) -> str:
     visible (e.g. "sk-ant-api03-abcdef1234" -> "sk-ant••••1234") so a user
     can recognize which key is active without seeing the full value.
     """
-    if len(value) <= 8:
+    if len(value) <= 14:
         return "•" * len(value)
     return f"{value[:6]}{'•' * 4}{value[-4:]}"

@@ -103,7 +103,9 @@ def show(note_id: str):
 
 
 @app.command("set-api-key")
-def set_api_key(api_key: str):
+def set_api_key(api_key: str = typer.Argument(None)):
+    if api_key is None:
+        api_key = typer.prompt("Enter your Claude API key", hide_input=True)
     config = load_config()
     try:
         service.save_provider_credential(config, api_key)

@@ -9,9 +9,19 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from keyring.errors import KeyringError
+
 from notetaker.config import Config, write_default_config
 from notetaker.credentials import get_provider_credential, mask_credential, set_provider_credential
-from notetaker.notes import NoteMeta, find_note_path, list_notes, read_note_body, rewrite_note_summary, write_note
+from notetaker.notes import (
+    NoteMeta,
+    find_note_path,
+    list_notes,
+    parse_note_meta,
+    read_note_body,
+    rewrite_note_summary,
+    write_note,
+)
 from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
 from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript, validate_claude_api_key
 from notetaker.transcriber import Transcriber
@@ -187,8 +197,19 @@ def resummarize_note(config: Config, note_id: str) -> Path:
             f"no persisted transcript found for '{note_id}' — resummarize needs the "
             f"{sidecar_path.name} sidecar, which this note doesn't have."
         )
+    try:
+        parse_note_meta(note_path)
+    except (ValueError, KeyError) as exc:
+        raise ServiceError(f"note '{note_id}' could not be parsed and cannot be resummarized: {exc}") from exc
     transcript = sidecar_path.read_text()
-    summary = _summarize_or_fallback(transcript, config)
+    if not transcript.strip():
+        summary = Summary(text="No audio was captured for this session.", action_items=[], tags=[])
+    else:
+        try:
+            provider = get_provider(config)
+            summary = summarize_transcript(transcript, provider)
+        except Exception as exc:
+            raise ServiceError(f"resummarization failed: {exc}") from exc
     rewrite_note_summary(note_path, summary, transcript.splitlines())
     return note_path
 
@@ -207,7 +228,11 @@ def initialize_config(config_path: Path) -> bool:
 def check_setup(config: Config) -> SetupStatus:
     blackhole = check_blackhole()
     if config.ai_provider == "claude":
-        if not (get_provider_credential(config.api_key_env) or os.environ.get(config.api_key_env)):
+        try:
+            keychain_credential = get_provider_credential(config.api_key_env)
+        except KeyringError:
+            keychain_credential = None
+        if not (keychain_credential or os.environ.get(config.api_key_env)):
             return SetupStatus(
                 blackhole=blackhole,
                 provider_ready=False,
@@ -256,11 +281,17 @@ def save_provider_credential(config: Config, api_key: str) -> None:
         )
     if not validate_claude_api_key(api_key):
         raise ServiceError("That API key was rejected by Anthropic's API — check it and try again.")
-    set_provider_credential(config.api_key_env, api_key)
+    try:
+        set_provider_credential(config.api_key_env, api_key)
+    except KeyringError as exc:
+        raise ServiceError(f"Could not save to the macOS Keychain: {exc}") from exc
 
 
 def get_masked_provider_credential(config: Config) -> str | None:
-    value = get_provider_credential(config.api_key_env)
+    try:
+        value = get_provider_credential(config.api_key_env)
+    except KeyringError:
+        return None
     if value is None:
         return None
     return mask_credential(value)

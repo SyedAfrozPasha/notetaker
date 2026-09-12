@@ -35,3 +35,7 @@ def test_mask_credential_keeps_prefix_and_suffix():
 
 def test_mask_credential_fully_masks_short_values():
     assert mask_credential("short") == "•••••"
+
+
+def test_mask_credential_fully_masks_ten_character_values():
+    assert mask_credential("0123456789") == "••••••••••"

@@ -34,7 +34,8 @@ Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally 
    doesn't qualify.
 
 4. Set your AI provider:
-   - **Claude (default, cloud):** export `ANTHROPIC_API_KEY` in your shell profile.
+   - **Claude (default, cloud):** either run `notetaker set-api-key` (stores it in the
+     macOS Keychain — recommended), or export `ANTHROPIC_API_KEY` in your shell profile.
    - **Apple Foundation Models (opt-in, fully local, no API key):** install
      [`apfel`](https://github.com/Arthur-Ficial/apfel) (`brew install apfel`), start it
      as a background service (`brew services start apfel`), and set both `ai_provider:
@@ -54,6 +55,9 @@ notetaker start "Team Standup"   # begin recording + live transcription
 notetaker stop                   # stop, summarize, save the note
 notetaker list                   # show recent notes
 notetaker show 2026-09-11-team-standup
+notetaker resummarize 2026-09-11-team-standup   # redo the summary from the saved transcript
+notetaker set-api-key            # store your Claude API key in the macOS Keychain
+notetaker show-api-key           # show the masked, currently active key
 ```
 
 ## A note on recording consent

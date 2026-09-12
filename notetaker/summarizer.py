@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 import anthropic
+from keyring.errors import KeyringError
 
 from notetaker.config import Config, ConfigError
 from notetaker.credentials import get_provider_credential
@@ -215,7 +216,11 @@ def check_apple_local_preflight() -> list[str]:
 
 def get_provider(config: Config) -> Provider:
     if config.ai_provider == "claude":
-        api_key = get_provider_credential(config.api_key_env) or os.environ.get(config.api_key_env)
+        try:
+            keychain_credential = get_provider_credential(config.api_key_env)
+        except KeyringError:
+            keychain_credential = None
+        api_key = keychain_credential or os.environ.get(config.api_key_env)
         if not api_key:
             raise ConfigError(
                 f"No credential found for '{config.api_key_env}'. Run `notetaker set-api-key <key>`, "
