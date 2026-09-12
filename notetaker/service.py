@@ -10,10 +10,10 @@ from datetime import datetime
 from pathlib import Path
 
 from notetaker.config import Config, write_default_config
-from notetaker.credentials import get_provider_credential
+from notetaker.credentials import get_provider_credential, mask_credential, set_provider_credential
 from notetaker.notes import NoteMeta, find_note_path, list_notes, read_note_body, write_note
 from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
-from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript
+from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript, validate_claude_api_key
 from notetaker.transcriber import Transcriber
 
 SESSION_FILE_NAME = "current_session.json"
@@ -228,3 +228,20 @@ def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:
     else:
         end_time = info.start_time
     return stop_session(info, config, config_dir, end_time=end_time)
+
+
+def save_provider_credential(config: Config, api_key: str) -> None:
+    if config.ai_provider != "claude":
+        raise ServiceError(
+            f"Setting a credential is only supported for the 'claude' provider (current: '{config.ai_provider}')."
+        )
+    if not validate_claude_api_key(api_key):
+        raise ServiceError("That API key was rejected by Anthropic's API — check it and try again.")
+    set_provider_credential(config.api_key_env, api_key)
+
+
+def get_masked_provider_credential(config: Config) -> str | None:
+    value = get_provider_credential(config.api_key_env)
+    if value is None:
+        return None
+    return mask_credential(value)

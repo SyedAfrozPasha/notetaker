@@ -451,3 +451,45 @@ def test_cancel_session_sends_sigterm_and_waits_for_live_pid(monkeypatch, tmp_pa
     assert calls["kill"] == (999999, signal.SIGTERM)
     assert calls["sleeps"] == 1
     assert not session_dir.exists()
+
+
+def test_save_provider_credential_rejects_non_claude_provider(tmp_path):
+    from notetaker.service import save_provider_credential
+
+    config = Config(tmp_path, "tiny", "apple_local", "apple-foundationmodel", "UNUSED")
+    with pytest.raises(ServiceError, match="only supported for the 'claude' provider"):
+        save_provider_credential(config, "sk-ant-whatever")
+
+
+def test_save_provider_credential_rejects_invalid_key(monkeypatch, tmp_path):
+    from notetaker.service import save_provider_credential
+
+    monkeypatch.setattr("notetaker.service.validate_claude_api_key", lambda key: False)
+    with pytest.raises(ServiceError, match="rejected by Anthropic's API"):
+        save_provider_credential(_config(tmp_path), "sk-ant-bad-key")
+
+
+def test_save_provider_credential_stores_valid_key(monkeypatch, tmp_path):
+    from notetaker.service import save_provider_credential
+
+    calls = {}
+    monkeypatch.setattr("notetaker.service.validate_claude_api_key", lambda key: True)
+    monkeypatch.setattr(
+        "notetaker.service.set_provider_credential", lambda key_name, value: calls.__setitem__("args", (key_name, value))
+    )
+    save_provider_credential(_config(tmp_path), "sk-ant-good-key")
+    assert calls["args"] == ("ANTHROPIC_API_KEY", "sk-ant-good-key")
+
+
+def test_get_masked_provider_credential_returns_none_when_unset(monkeypatch, tmp_path):
+    from notetaker.service import get_masked_provider_credential
+
+    monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: None)
+    assert get_masked_provider_credential(_config(tmp_path)) is None
+
+
+def test_get_masked_provider_credential_returns_masked_value(monkeypatch, tmp_path):
+    from notetaker.service import get_masked_provider_credential
+
+    monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: "sk-ant-api03-abcdef1234")
+    assert get_masked_provider_credential(_config(tmp_path)) == "sk-ant••••1234"
