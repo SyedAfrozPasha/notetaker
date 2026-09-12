@@ -6,6 +6,7 @@ from notetaker.notes import (
     note_id_for,
     parse_note_meta,
     read_note_body,
+    rewrite_note_summary,
     slugify,
     write_note,
 )
@@ -78,3 +79,35 @@ def test_find_note_path(tmp_path):
     write_note(tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 5, summary, [])
     assert find_note_path(tmp_path, "2026-09-11-standup") is not None
     assert find_note_path(tmp_path, "nonexistent") is None
+
+
+def test_rewrite_note_summary_replaces_summary_keeping_title_and_date(tmp_path):
+    notes_dir = tmp_path / "notes"
+    path = write_note(
+        notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5,
+        Summary("old summary", ["old item"], ["old-tag"]), ["[00:00:01] hello"],
+    )
+
+    rewrite_note_summary(path, Summary("new summary", ["new item"], ["new-tag"]), ["[00:00:01] hello"])
+
+    text = path.read_text()
+    assert "new summary" in text
+    assert "new item" in text
+    assert "new-tag" in text
+    assert "old summary" not in text
+    assert "title: Standup" in text
+    assert "duration_minutes: 5" in text
+
+
+def test_rewrite_note_summary_does_not_change_the_note_id(tmp_path):
+    notes_dir = tmp_path / "notes"
+    path = write_note(
+        notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5,
+        Summary("old summary", [], []), ["[00:00:01] hello"],
+    )
+    original_path = path
+
+    rewrite_note_summary(path, Summary("new summary", [], []), ["[00:00:01] hello"])
+
+    assert path == original_path
+    assert len(list(notes_dir.glob("*.md"))) == 1

@@ -31,6 +31,29 @@ def note_id_for(title: str, start_time: datetime, notes_dir: Path) -> str:
     return f"{base_id}-{start_time.strftime('%H%M')}"
 
 
+def _render_note_body(
+    title: str,
+    start_time: datetime,
+    duration_minutes: int,
+    summary: Summary,
+    transcript_lines: list[str],
+) -> str:
+    frontmatter = {
+        "title": title,
+        "date": start_time.isoformat(),
+        "duration_minutes": duration_minutes,
+        "tags": summary.tags,
+    }
+    action_items_md = "\n".join(f"- [ ] {item}" for item in summary.action_items) or "- (none)"
+    transcript_md = "\n".join(transcript_lines) or "(no transcript captured)"
+    return (
+        f"---\n{yaml.safe_dump(frontmatter, sort_keys=False)}---\n\n"
+        f"## Summary\n{summary.text}\n\n"
+        f"## Action Items\n{action_items_md}\n\n"
+        f"## Transcript\n{transcript_md}\n"
+    )
+
+
 def write_note(
     notes_dir: Path,
     title: str,
@@ -41,23 +64,18 @@ def write_note(
 ) -> Path:
     notes_dir.mkdir(parents=True, exist_ok=True)
     note_id = note_id_for(title, start_time, notes_dir)
-    frontmatter = {
-        "title": title,
-        "date": start_time.isoformat(),
-        "duration_minutes": duration_minutes,
-        "tags": summary.tags,
-    }
-    action_items_md = "\n".join(f"- [ ] {item}" for item in summary.action_items) or "- (none)"
-    transcript_md = "\n".join(transcript_lines) or "(no transcript captured)"
-    body = (
-        f"---\n{yaml.safe_dump(frontmatter, sort_keys=False)}---\n\n"
-        f"## Summary\n{summary.text}\n\n"
-        f"## Action Items\n{action_items_md}\n\n"
-        f"## Transcript\n{transcript_md}\n"
-    )
     path = notes_dir / f"{note_id}.md"
-    path.write_text(body)
+    path.write_text(_render_note_body(title, start_time, duration_minutes, summary, transcript_lines))
     return path
+
+
+def rewrite_note_summary(path: Path, summary: Summary, transcript_lines: list[str]) -> None:
+    """Replaces an existing Note's Summary, Action Items, and tags at the
+    same path — keeping its title/date/duration_minutes unchanged — by
+    re-rendering the note body. Used by Resummarize.
+    """
+    meta = parse_note_meta(path)
+    path.write_text(_render_note_body(meta.title, meta.date, meta.duration_minutes, summary, transcript_lines))
 
 
 def parse_note_meta(path: Path) -> NoteMeta:
