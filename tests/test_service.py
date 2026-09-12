@@ -1,5 +1,6 @@
 import json
 import os
+import signal
 import sys
 from datetime import datetime
 from unittest.mock import MagicMock
@@ -12,6 +13,7 @@ from notetaker.recorder import BlackHoleStatus
 from notetaker.service import (
     ServiceError,
     SessionInfo,
+    cancel_session,
     check_and_salvage_orphan,
     get_note_body,
     list_all_notes,
@@ -366,4 +368,39 @@ def test_check_and_salvage_orphan_salvages_dead_session_into_note(monkeypatch, t
     assert note_path is not None
     assert "summary text" in note_path.read_text()
     assert not session_file.exists()
+    assert not session_dir.exists()
+
+
+def test_cancel_session_discards_without_writing_note(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n")
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text("{}")
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+
+    cancel_session(_session_info(session_dir), tmp_path)
+
+    assert not session_dir.exists()
+    assert not session_file.exists()
+
+
+def test_cancel_session_sends_sigterm_and_waits_for_live_pid(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text("{}")
+
+    calls = {"kill": None, "sleeps": 0}
+    pid_states = iter([True, True, False])
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: next(pid_states))
+    monkeypatch.setattr("notetaker.service.os.kill", lambda pid, sig: calls.__setitem__("kill", (pid, sig)))
+    monkeypatch.setattr(
+        "notetaker.service.time.sleep", lambda s: calls.__setitem__("sleeps", calls["sleeps"] + 1)
+    )
+
+    cancel_session(_session_info(session_dir), tmp_path)
+
+    assert calls["kill"] == (999999, signal.SIGTERM)
+    assert calls["sleeps"] == 1
     assert not session_dir.exists()

@@ -110,15 +110,19 @@ def read_active_session(config_dir: Path) -> SessionInfo:
         ) from exc
 
 
+def _terminate_recorder(pid: int) -> None:
+    if pid_alive(pid):
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(30):
+            if not pid_alive(pid):
+                break
+            time.sleep(1)
+
+
 def stop_session(info: SessionInfo, config: Config, config_dir: Path) -> Path:
     session_file = session_file_path(config_dir)
 
-    if pid_alive(info.pid):
-        os.kill(info.pid, signal.SIGTERM)
-        for _ in range(30):
-            if not pid_alive(info.pid):
-                break
-            time.sleep(1)
+    _terminate_recorder(info.pid)
 
     transcript_path = info.session_dir / "transcript.txt"
     transcript = transcript_path.read_text() if transcript_path.exists() else ""
@@ -145,6 +149,15 @@ def stop_session(info: SessionInfo, config: Config, config_dir: Path) -> Path:
     session_file.unlink(missing_ok=True)
 
     return note_path
+
+
+def cancel_session(info: SessionInfo, config_dir: Path) -> None:
+    session_file = session_file_path(config_dir)
+
+    _terminate_recorder(info.pid)
+
+    shutil.rmtree(info.session_dir, ignore_errors=True)
+    session_file.unlink(missing_ok=True)
 
 
 def list_all_notes(config: Config) -> list[NoteMeta]:
