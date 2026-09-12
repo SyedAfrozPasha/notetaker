@@ -265,11 +265,13 @@ def ensure_whisper_model(config: Config) -> None:
 
 def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:
     """Detects and salvages an Orphaned session: a Session whose Recorder died
-    without a matching `stop` (see CONTEXT.md). Not safe for concurrent
-    callers — there is no locking between the read and the salvage, so this
-    assumes a single caller at a time. Fine for today's single CLI
-    invocation; a future poller (e.g. a menu bar app or dashboard) calling
-    this on its own cadence will need an atomic claim added here first.
+    without a matching `stop` (see CONTEXT.md). Safe for concurrent callers
+    (e.g. a menu bar app's poller and a CLI `start` running at the same
+    moment): the session file is atomically renamed to claim it before
+    salvaging, so a second caller's claim attempt finds nothing to rename and
+    returns None instead of double-salvaging the same session. If salvaging
+    itself fails, the claim is released (the file restored to its original
+    name) so a future attempt can retry rather than losing the orphan.
     """
     try:
         info = read_active_session(config_dir)
@@ -277,12 +279,24 @@ def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:
         return None
     if pid_alive(info.pid):
         return None
+    session_file = session_file_path(config_dir)
+    claim_path = session_file.with_suffix(".salvaging")
+    try:
+        session_file.rename(claim_path)
+    except FileNotFoundError:
+        return None
     transcript_path = info.session_dir / "transcript.txt"
     if transcript_path.exists():
         end_time = datetime.fromtimestamp(transcript_path.stat().st_mtime)
     else:
         end_time = info.start_time
-    return stop_session(info, config, config_dir, end_time=end_time)
+    try:
+        note_path = stop_session(info, config, config_dir, end_time=end_time)
+    except Exception:
+        claim_path.rename(session_file)
+        raise
+    claim_path.unlink(missing_ok=True)
+    return note_path
 
 
 def save_provider_credential(config: Config, api_key: str) -> None:

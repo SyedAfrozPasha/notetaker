@@ -642,3 +642,68 @@ def test_stop_session_reports_phases_via_callback(monkeypatch, tmp_path):
     )
 
     assert phases == ["Stopping recorder...", "Summarizing..."]
+
+
+def test_check_and_salvage_orphan_returns_none_when_claim_loses_race(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {
+                "pid": 999999,
+                "title": "Standup",
+                "start_time": "2026-09-11T10:00:00",
+                "session_dir": str(session_dir),
+            }
+        )
+    )
+    notes_dir = tmp_path / "notes"
+
+    def fake_pid_alive(pid):
+        # Simulate a concurrent caller (e.g. the menu bar app's timer) winning
+        # the claim race in the window between our pid check and our own
+        # rename attempt.
+        session_file.rename(session_file.with_suffix(".salvaging"))
+        return False
+
+    monkeypatch.setattr("notetaker.service.pid_alive", fake_pid_alive)
+
+    result = check_and_salvage_orphan(
+        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+    )
+
+    assert result is None
+
+
+def test_check_and_salvage_orphan_restores_session_file_when_stop_session_fails(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {
+                "pid": 999999,
+                "title": "Standup",
+                "start_time": "2026-09-11T10:00:00",
+                "session_dir": str(session_dir),
+            }
+        )
+    )
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+
+    def raise_error(info, config, config_dir, end_time=None):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("notetaker.service.stop_session", raise_error)
+
+    with pytest.raises(RuntimeError, match="disk full"):
+        check_and_salvage_orphan(
+            Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+        )
+
+    # The claim must be released so a future attempt can retry — the session
+    # file is back under its original name, not lost.
+    assert session_file.exists()
+    assert not session_file.with_suffix(".salvaging").exists()
