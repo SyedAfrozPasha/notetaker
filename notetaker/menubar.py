@@ -85,7 +85,7 @@ class NotetakerMenuBarApp(rumps.App):
         title = auto_generated_title(datetime.now())
         try:
             service.start_session(title, config, CONFIG_DIR)
-        except service.ServiceError as exc:
+        except Exception as exc:
             rumps.alert(title="Could not start recording", message=str(exc))
 
     def _stop(self, config, info):

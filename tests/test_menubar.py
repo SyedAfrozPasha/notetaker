@@ -16,6 +16,23 @@ from notetaker.menubar import (
 from notetaker.service import SessionInfo
 
 
+@pytest.fixture(autouse=True)
+def _block_real_rumps_dialogs(monkeypatch):
+    """Fails fast if a test reaches real rumps.alert/rumps.notification
+    without mocking them first — the alternative is a silent hang on a real
+    modal dialog (NSAlert.runModal()).
+    """
+
+    def _fail(*args, **kwargs):
+        raise AssertionError(
+            "A test reached real rumps.alert/rumps.notification without mocking it. "
+            "Mock notetaker.menubar.rumps.alert / .notification explicitly."
+        )
+
+    monkeypatch.setattr("notetaker.menubar.rumps.alert", _fail)
+    monkeypatch.setattr("notetaker.menubar.rumps.notification", _fail)
+
+
 def test_format_elapsed_under_an_hour():
     start = datetime(2026, 9, 16, 10, 0, 0)
     now = datetime(2026, 9, 16, 10, 5, 23)
@@ -172,6 +189,27 @@ def test_on_toggle_shows_alert_when_start_fails(app, monkeypatch, tmp_path):
 
     assert len(calls) == 1
     assert "BlackHole is not active." in calls[0][1]
+
+
+def test_on_toggle_shows_alert_when_start_raises_unexpected_error(app, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: None)
+
+    def fail(title, config, config_dir):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("notetaker.menubar.service.start_session", fail)
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.menubar.rumps.alert", lambda title, message: calls.append((title, message))
+    )
+
+    app._on_toggle(None)
+
+    assert len(calls) == 1
+    assert calls[0][0] == "Could not start recording"
+    assert "disk full" in calls[0][1]
 
 
 def test_on_toggle_shows_alert_when_stop_fails(app, monkeypatch, tmp_path):
