@@ -299,6 +299,22 @@ def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:
     return note_path
 
 
+def get_current_session_status(config_dir: Path) -> SessionInfo | None:
+    """Returns the currently active Session's info if one is genuinely
+    running (a live Recorder process), or None otherwise (no session file, a
+    corrupt one, or a dead pid). Never raises — for a poller (e.g. a menu bar
+    app) that wants to display status without handling exceptions for the
+    common "nothing is recording" case.
+    """
+    try:
+        info = read_active_session(config_dir)
+    except ServiceError:
+        return None
+    if not pid_alive(info.pid):
+        return None
+    return info
+
+
 def save_provider_credential(config: Config, api_key: str) -> None:
     if config.ai_provider != "claude":
         raise ServiceError(

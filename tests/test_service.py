@@ -15,6 +15,7 @@ from notetaker.service import (
     SessionInfo,
     cancel_session,
     check_and_salvage_orphan,
+    get_current_session_status,
     get_note_body,
     list_all_notes,
     pid_alive,
@@ -707,3 +708,33 @@ def test_check_and_salvage_orphan_restores_session_file_when_stop_session_fails(
     # file is back under its original name, not lost.
     assert session_file.exists()
     assert not session_file.with_suffix(".salvaging").exists()
+
+
+def test_get_current_session_status_returns_none_when_no_session_file(tmp_path):
+    assert get_current_session_status(tmp_path) is None
+
+
+def test_get_current_session_status_returns_none_when_session_file_corrupt(tmp_path):
+    (tmp_path / "current_session.json").write_text("{not valid json")
+    assert get_current_session_status(tmp_path) is None
+
+
+def test_get_current_session_status_returns_none_when_pid_dead(tmp_path):
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {"pid": 999999, "title": "Standup", "start_time": "2026-09-11T10:00:00", "session_dir": str(tmp_path)}
+        )
+    )
+    assert get_current_session_status(tmp_path) is None
+
+
+def test_get_current_session_status_returns_info_when_pid_alive(tmp_path):
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {"pid": os.getpid(), "title": "Standup", "start_time": "2026-09-11T10:00:00", "session_dir": str(tmp_path)}
+        )
+    )
+    info = get_current_session_status(tmp_path)
+    assert info == SessionInfo(os.getpid(), "Standup", datetime(2026, 9, 11, 10, 0), tmp_path)
