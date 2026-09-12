@@ -286,3 +286,21 @@ def test_stop_escapes_rich_markup_in_phase_callback(monkeypatch, tmp_path):
     monkeypatch.setattr("rich.status.Status.update", lambda self, phase: calls.append(phase))
     captured["on_phase"]("Summarizing [note]...")
     assert calls == [escape("Summarizing [note]...")]
+
+
+def test_menubar_command_launches_the_app(monkeypatch):
+    calls = []
+
+    class FakeApp:
+        def __init__(self):
+            calls.append("constructed")
+
+        def run(self):
+            calls.append("ran")
+
+    monkeypatch.setattr("notetaker.menubar.NotetakerMenuBarApp", FakeApp)
+
+    result = runner.invoke(app, ["menubar"])
+
+    assert result.exit_code == 0
+    assert calls == ["constructed", "ran"]

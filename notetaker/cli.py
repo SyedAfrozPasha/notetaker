@@ -149,3 +149,11 @@ def resummarize(note_id: str):
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1)
     typer.echo(f"Resummarized note: {note_path}")
+
+
+@app.command()
+def menubar():
+    """Launches the menu bar app (blocks until quit)."""
+    from notetaker.menubar import NotetakerMenuBarApp
+
+    NotetakerMenuBarApp().run()
