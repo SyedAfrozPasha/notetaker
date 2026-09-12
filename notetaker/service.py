@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from keyring.errors import KeyringError
 
@@ -140,9 +141,17 @@ def _summarize_or_fallback(transcript: str, config: Config) -> Summary:
         return Summary(text=f"Summarization failed: {exc}", action_items=[], tags=[])
 
 
-def stop_session(info: SessionInfo, config: Config, config_dir: Path, end_time: datetime | None = None) -> Path:
+def stop_session(
+    info: SessionInfo,
+    config: Config,
+    config_dir: Path,
+    end_time: datetime | None = None,
+    on_phase: Callable[[str], None] | None = None,
+) -> Path:
     session_file = session_file_path(config_dir)
 
+    if on_phase:
+        on_phase("Stopping recorder...")
     _terminate_recorder(info.pid)
 
     transcript_path = info.session_dir / "transcript.txt"
@@ -153,6 +162,8 @@ def stop_session(info: SessionInfo, config: Config, config_dir: Path, end_time: 
         end_time = datetime.now()
     duration_minutes = int((end_time - info.start_time).total_seconds() // 60)
 
+    if on_phase:
+        on_phase("Summarizing...")
     summary = _summarize_or_fallback(transcript, config)
 
     note_path = write_note(

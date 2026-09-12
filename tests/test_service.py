@@ -624,3 +624,21 @@ def test_get_masked_provider_credential_returns_masked_value(monkeypatch, tmp_pa
 
     monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: "sk-ant-api03-abcdef1234")
     assert get_masked_provider_credential(_config(tmp_path)) == "sk-ant••••1234"
+
+
+def test_stop_session_reports_phases_via_callback(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (tmp_path / "current_session.json").write_text("{}")
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+
+    phases = []
+    stop_session(
+        _session_info(session_dir),
+        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+        tmp_path,
+        on_phase=phases.append,
+    )
+
+    assert phases == ["Stopping recorder...", "Summarizing..."]
