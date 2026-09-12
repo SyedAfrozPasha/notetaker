@@ -21,6 +21,7 @@ Installed by cloning the repo and running a setup script (`./install.sh`) — no
 Two run modes coordinating entirely through the filesystem under `~/.notetaker/` (a PID file, a per-session working directory, and a config file) — no daemon socket, no database:
 
 - `cli.py` — command dispatch (Typer) for `init`, `start`, `stop`, `list`, `show`.
+- `service.py` — all operational logic (start/stop/list/show/init), used by `cli.py` and (from here on) every other UI surface. Raises `ServiceError` for user-facing failures; never prints anything itself — `cli.py` is a thin adapter that translates its results into `typer.echo` calls and exit codes.
 - `recorder.py` — background process (spawned by `start`, killed via SIGTERM by `stop`) that captures the BlackHole input into rolling WAV chunks.
 - `transcriber.py` — wraps `faster-whisper`; transcribes each chunk and appends timestamped lines to a running transcript file.
 - `summarizer.py` — defines the `Provider` interface (`summarize(transcript) -> Summary`) with a `ClaudeProvider` implementation; this is the seam for adding other AI backends later.
