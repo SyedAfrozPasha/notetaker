@@ -91,6 +91,25 @@ def test_start_prints_recovery_message_when_orphan_salvaged(monkeypatch, tmp_pat
 
     assert result.exit_code == 0
     assert f"Recovered a crashed session and saved it as a note: {salvaged_note_path}" in result.output
+
+
+def test_start_continues_when_salvage_raises_unexpectedly(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+
+    def raise_disk_error(config, config_dir):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("notetaker.cli.service.check_and_salvage_orphan", raise_disk_error)
+    monkeypatch.setattr(
+        "notetaker.cli.service.start_session",
+        lambda title, config, config_dir: SessionInfo(12345, title, datetime.now(), tmp_path),
+    )
+
+    result = runner.invoke(app, ["start", "Standup"])
+
+    assert result.exit_code == 0
+    assert "could not recover a possibly crashed session" in result.output
+    assert "Recording started: Standup" in result.output
     assert "Recording started: Standup" in result.output
 
 

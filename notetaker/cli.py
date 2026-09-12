@@ -51,7 +51,11 @@ def init():
 @app.command()
 def start(title: str):
     config = load_config()
-    salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
+    try:
+        salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
+    except Exception as exc:
+        typer.echo(f"warning: could not recover a possibly crashed session: {exc}", err=True)
+        salvaged_path = None
     if salvaged_path is not None:
         typer.echo(f"Recovered a crashed session and saved it as a note: {salvaged_path}")
     try:

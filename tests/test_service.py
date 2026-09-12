@@ -2,7 +2,7 @@ import json
 import os
 import signal
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
@@ -369,6 +369,42 @@ def test_check_and_salvage_orphan_salvages_dead_session_into_note(monkeypatch, t
     assert "summary text" in note_path.read_text()
     assert not session_file.exists()
     assert not session_dir.exists()
+
+
+def test_check_and_salvage_orphan_computes_duration_from_transcript_mtime(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    transcript_path = session_dir / "transcript.txt"
+    transcript_path.write_text("[00:00:03] hello\n")
+    # backdate the transcript's mtime to 5 minutes after the session's start_time
+    start_time = datetime(2026, 9, 11, 10, 0, 0)
+    backdated_mtime = (start_time + timedelta(minutes=5)).timestamp()
+    os.utime(transcript_path, (backdated_mtime, backdated_mtime))
+
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {
+                "pid": 999999,
+                "title": "Standup",
+                "start_time": start_time.isoformat(),
+                "session_dir": str(session_dir),
+            }
+        )
+    )
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+    monkeypatch.setattr(
+        "notetaker.service.summarize_transcript",
+        lambda transcript, provider: Summary(text="summary text", action_items=[], tags=[]),
+    )
+
+    note_path = check_and_salvage_orphan(
+        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+    )
+
+    assert "duration_minutes: 5" in note_path.read_text()
 
 
 def test_cancel_session_discards_without_writing_note(monkeypatch, tmp_path):

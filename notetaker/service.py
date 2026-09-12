@@ -119,7 +119,7 @@ def _terminate_recorder(pid: int) -> None:
             time.sleep(1)
 
 
-def stop_session(info: SessionInfo, config: Config, config_dir: Path) -> Path:
+def stop_session(info: SessionInfo, config: Config, config_dir: Path, end_time: datetime | None = None) -> Path:
     session_file = session_file_path(config_dir)
 
     _terminate_recorder(info.pid)
@@ -128,7 +128,9 @@ def stop_session(info: SessionInfo, config: Config, config_dir: Path) -> Path:
     transcript = transcript_path.read_text() if transcript_path.exists() else ""
     transcript_lines = transcript.splitlines()
 
-    duration_minutes = int((datetime.now() - info.start_time).total_seconds() // 60)
+    if end_time is None:
+        end_time = datetime.now()
+    duration_minutes = int((end_time - info.start_time).total_seconds() // 60)
 
     if not transcript.strip():
         summary = Summary(text="No audio was captured for this session.", action_items=[], tags=[])
@@ -206,10 +208,22 @@ def ensure_whisper_model(config: Config) -> None:
 
 
 def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:
+    """Detects and salvages an Orphaned session: a Session whose Recorder died
+    without a matching `stop` (see CONTEXT.md). Not safe for concurrent
+    callers — there is no locking between the read and the salvage, so this
+    assumes a single caller at a time. Fine for today's single CLI
+    invocation; a future poller (e.g. a menu bar app or dashboard) calling
+    this on its own cadence will need an atomic claim added here first.
+    """
     try:
         info = read_active_session(config_dir)
     except ServiceError:
         return None
     if pid_alive(info.pid):
         return None
-    return stop_session(info, config, config_dir)
+    transcript_path = info.session_dir / "transcript.txt"
+    if transcript_path.exists():
+        end_time = datetime.fromtimestamp(transcript_path.stat().st_mtime)
+    else:
+        end_time = info.start_time
+    return stop_session(info, config, config_dir, end_time=end_time)
