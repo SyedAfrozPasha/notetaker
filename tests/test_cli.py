@@ -47,6 +47,7 @@ def test_init_fails_when_provider_not_ready(monkeypatch, tmp_path):
 
 def test_start_reports_service_error(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.check_and_salvage_orphan", lambda config, config_dir: None)
 
     def fail(*a, **k):
         raise ServiceError("BlackHole is not active. Run `notetaker init` for setup instructions.")
@@ -61,6 +62,7 @@ def test_start_reports_service_error(monkeypatch, tmp_path):
 
 def test_start_prints_reminders_and_confirmation_on_success(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.check_and_salvage_orphan", lambda config, config_dir: None)
     monkeypatch.setattr(
         "notetaker.cli.service.start_session",
         lambda title, config, config_dir: SessionInfo(12345, title, datetime.now(), tmp_path),
@@ -71,6 +73,24 @@ def test_start_prints_reminders_and_confirmation_on_success(monkeypatch, tmp_pat
     assert result.exit_code == 0
     assert "microphone access" in result.output
     assert "Teams will not show" in result.output
+    assert "Recording started: Standup" in result.output
+
+
+def test_start_prints_recovery_message_when_orphan_salvaged(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    salvaged_note_path = tmp_path / "notes" / "2026-09-10-standup.md"
+    monkeypatch.setattr(
+        "notetaker.cli.service.check_and_salvage_orphan", lambda config, config_dir: salvaged_note_path
+    )
+    monkeypatch.setattr(
+        "notetaker.cli.service.start_session",
+        lambda title, config, config_dir: SessionInfo(12345, title, datetime.now(), tmp_path),
+    )
+
+    result = runner.invoke(app, ["start", "Standup"])
+
+    assert result.exit_code == 0
+    assert f"Recovered a crashed session and saved it as a note: {salvaged_note_path}" in result.output
     assert "Recording started: Standup" in result.output
 
 
