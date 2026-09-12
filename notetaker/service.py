@@ -190,3 +190,13 @@ def check_setup(config: Config) -> SetupStatus:
 
 def ensure_whisper_model(config: Config) -> None:
     Transcriber(config.whisper_model)
+
+
+def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:
+    try:
+        info = read_active_session(config_dir)
+    except ServiceError:
+        return None
+    if pid_alive(info.pid):
+        return None
+    return stop_session(info, config, config_dir)

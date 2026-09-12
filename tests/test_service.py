@@ -12,6 +12,7 @@ from notetaker.recorder import BlackHoleStatus
 from notetaker.service import (
     ServiceError,
     SessionInfo,
+    check_and_salvage_orphan,
     get_note_body,
     list_all_notes,
     pid_alive,
@@ -313,3 +314,56 @@ def test_stop_session_writes_empty_transcript_sidecar_when_no_audio(monkeypatch,
     sidecar_path = notes_dir / f"{note_path.stem}.transcript.txt"
     assert sidecar_path.exists()
     assert sidecar_path.read_text() == ""
+
+
+def test_check_and_salvage_orphan_returns_none_when_no_session_file(tmp_path):
+    assert check_and_salvage_orphan(_config(tmp_path), tmp_path) is None
+
+
+def test_check_and_salvage_orphan_returns_none_when_session_file_corrupt(tmp_path):
+    (tmp_path / "current_session.json").write_text("{not valid json")
+    assert check_and_salvage_orphan(_config(tmp_path), tmp_path) is None
+
+
+def test_check_and_salvage_orphan_returns_none_when_pid_alive(tmp_path):
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {"pid": os.getpid(), "title": "x", "start_time": "2026-09-11T10:00:00", "session_dir": str(tmp_path)}
+        )
+    )
+    assert check_and_salvage_orphan(_config(tmp_path), tmp_path) is None
+    assert session_file.exists()  # untouched — a live session must not be disturbed
+
+
+def test_check_and_salvage_orphan_salvages_dead_session_into_note(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n")
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {
+                "pid": 999999,
+                "title": "Standup",
+                "start_time": "2026-09-11T10:00:00",
+                "session_dir": str(session_dir),
+            }
+        )
+    )
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+    monkeypatch.setattr(
+        "notetaker.service.summarize_transcript",
+        lambda transcript, provider: Summary(text="summary text", action_items=[], tags=[]),
+    )
+
+    note_path = check_and_salvage_orphan(
+        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+    )
+
+    assert note_path is not None
+    assert "summary text" in note_path.read_text()
+    assert not session_file.exists()
+    assert not session_dir.exists()
