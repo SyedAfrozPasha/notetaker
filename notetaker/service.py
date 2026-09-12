@@ -95,6 +95,8 @@ def _release_claim(session_file: Path, claim_path: Path, *, restore: bool) -> No
 
 def start_session(title: str, config: Config, config_dir: Path) -> SessionInfo:
     session_file = session_file_path(config_dir)
+    if session_file.with_suffix(".salvaging").exists():
+        raise ServiceError("a session is currently being stopped. Try again in a moment.")
     if session_file.exists():
         try:
             raw = json.loads(session_file.read_text())
