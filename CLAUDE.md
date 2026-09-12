@@ -20,8 +20,9 @@ Installed by cloning the repo and running a setup script (`./install.sh`) — no
 
 Two run modes coordinating entirely through the filesystem under `~/.notetaker/` (a PID file, a per-session working directory, and a config file) — no daemon socket, no database:
 
-- `cli.py` — command dispatch (Typer) for `init`, `start`, `stop`, `list`, `show`.
+- `cli.py` — command dispatch (Typer) for `init`, `start`, `stop`, `list`, `show`, `resummarize`, `set-api-key`, `show-api-key`.
 - `service.py` — all operational logic (start/stop/list/show/init/cancel), used by `cli.py` and (from here on) every other UI surface. Raises `ServiceError` for user-facing failures; never prints anything itself — `cli.py` is a thin adapter that translates its results into `typer.echo` calls and exit codes. Detects and salvages an Orphaned session (a crashed Recorder from a previous run) via `check_and_salvage_orphan`, called before every `start`; `cancel_session` discards an in-progress Session without producing a Note. Every `stop`/salvage also writes a `<note-id>.transcript.txt` sidecar next to the note, preserving the raw transcript for future resummarization.
+- `credentials.py` — provider-agnostic Keychain read/write/masking (`get_provider_credential`, `set_provider_credential`, `mask_credential`). Never stores a Provider credential in `config.yaml` or any plaintext file. `get_provider`/`check_setup` check the Keychain first, falling back to the credential's environment variable for backward compatibility.
 - `recorder.py` — background process (spawned by `start`, killed via SIGTERM by `stop`) that captures the BlackHole input into rolling WAV chunks.
 - `transcriber.py` — wraps `faster-whisper`; transcribes each chunk and appends timestamped lines to a running transcript file.
 - `summarizer.py` — defines the `Provider` interface (`summarize(transcript) -> Summary`) with a `ClaudeProvider` implementation; this is the seam for adding other AI backends later.
