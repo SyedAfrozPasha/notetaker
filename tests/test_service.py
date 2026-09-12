@@ -245,7 +245,17 @@ def test_initialize_config_skips_when_present(tmp_path):
 def test_check_setup_reports_blackhole_and_ready_claude_provider(monkeypatch, tmp_path):
     from notetaker.service import SetupStatus, check_setup
     monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: None)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
+    status = check_setup(_config(tmp_path))
+    assert status == SetupStatus(blackhole=BlackHoleStatus.ACTIVE, provider_ready=True, provider_problems=[])
+
+
+def test_check_setup_reports_ready_when_keychain_has_credential(monkeypatch, tmp_path):
+    from notetaker.service import SetupStatus, check_setup
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: "sk-ant-from-keychain")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     status = check_setup(_config(tmp_path))
     assert status == SetupStatus(blackhole=BlackHoleStatus.ACTIVE, provider_ready=True, provider_problems=[])
 
@@ -253,10 +263,11 @@ def test_check_setup_reports_blackhole_and_ready_claude_provider(monkeypatch, tm
 def test_check_setup_reports_missing_claude_api_key(monkeypatch, tmp_path):
     from notetaker.service import check_setup
     monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: None)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     status = check_setup(_config(tmp_path))
     assert status.provider_ready is False
-    assert "ANTHROPIC_API_KEY is not set" in status.provider_problems[0]
+    assert "No credential found for ANTHROPIC_API_KEY" in status.provider_problems[0]
 
 
 def test_check_setup_reports_apple_local_problems(monkeypatch, tmp_path):

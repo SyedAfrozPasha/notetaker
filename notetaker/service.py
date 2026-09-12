@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from notetaker.config import Config, write_default_config
+from notetaker.credentials import get_provider_credential
 from notetaker.notes import NoteMeta, find_note_path, list_notes, read_note_body, write_note
 from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
 from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript
@@ -187,13 +188,13 @@ def initialize_config(config_path: Path) -> bool:
 def check_setup(config: Config) -> SetupStatus:
     blackhole = check_blackhole()
     if config.ai_provider == "claude":
-        if not os.environ.get(config.api_key_env):
+        if not (get_provider_credential(config.api_key_env) or os.environ.get(config.api_key_env)):
             return SetupStatus(
                 blackhole=blackhole,
                 provider_ready=False,
                 provider_problems=[
-                    f"{config.api_key_env} is not set. Export it in your shell profile, "
-                    "then re-run `notetaker init`."
+                    f"No credential found for {config.api_key_env}. Run `notetaker set-api-key <key>`, "
+                    "or export it as an environment variable, then re-run `notetaker init`."
                 ],
             )
         return SetupStatus(blackhole=blackhole, provider_ready=True, provider_problems=[])
