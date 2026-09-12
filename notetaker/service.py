@@ -11,7 +11,7 @@ from pathlib import Path
 
 from notetaker.config import Config, write_default_config
 from notetaker.credentials import get_provider_credential, mask_credential, set_provider_credential
-from notetaker.notes import NoteMeta, find_note_path, list_notes, read_note_body, write_note
+from notetaker.notes import NoteMeta, find_note_path, list_notes, read_note_body, rewrite_note_summary, write_note
 from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
 from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript, validate_claude_api_key
 from notetaker.transcriber import Transcriber
@@ -120,6 +120,16 @@ def _terminate_recorder(pid: int) -> None:
             time.sleep(1)
 
 
+def _summarize_or_fallback(transcript: str, config: Config) -> Summary:
+    if not transcript.strip():
+        return Summary(text="No audio was captured for this session.", action_items=[], tags=[])
+    try:
+        provider = get_provider(config)
+        return summarize_transcript(transcript, provider)
+    except Exception as exc:
+        return Summary(text=f"Summarization failed: {exc}", action_items=[], tags=[])
+
+
 def stop_session(info: SessionInfo, config: Config, config_dir: Path, end_time: datetime | None = None) -> Path:
     session_file = session_file_path(config_dir)
 
@@ -133,14 +143,7 @@ def stop_session(info: SessionInfo, config: Config, config_dir: Path, end_time: 
         end_time = datetime.now()
     duration_minutes = int((end_time - info.start_time).total_seconds() // 60)
 
-    if not transcript.strip():
-        summary = Summary(text="No audio was captured for this session.", action_items=[], tags=[])
-    else:
-        try:
-            provider = get_provider(config)
-            summary = summarize_transcript(transcript, provider)
-        except Exception as exc:
-            summary = Summary(text=f"Summarization failed: {exc}", action_items=[], tags=[])
+    summary = _summarize_or_fallback(transcript, config)
 
     note_path = write_note(
         config.notes_dir, info.title, info.start_time, duration_minutes, summary, transcript_lines
@@ -172,6 +175,22 @@ def get_note_body(config: Config, note_id: str) -> str:
     if path is None:
         raise ServiceError(f"no note found with id '{note_id}'.")
     return read_note_body(path)
+
+
+def resummarize_note(config: Config, note_id: str) -> Path:
+    note_path = find_note_path(config.notes_dir, note_id)
+    if note_path is None:
+        raise ServiceError(f"no note found with id '{note_id}'.")
+    sidecar_path = note_path.parent / f"{note_path.stem}.transcript.txt"
+    if not sidecar_path.exists():
+        raise ServiceError(
+            f"no persisted transcript found for '{note_id}' — resummarize needs the "
+            f"{sidecar_path.name} sidecar, which this note doesn't have."
+        )
+    transcript = sidecar_path.read_text()
+    summary = _summarize_or_fallback(transcript, config)
+    rewrite_note_summary(note_path, summary, transcript.splitlines())
+    return note_path
 
 
 @dataclass

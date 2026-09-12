@@ -488,6 +488,73 @@ def test_get_masked_provider_credential_returns_none_when_unset(monkeypatch, tmp
     assert get_masked_provider_credential(_config(tmp_path)) is None
 
 
+def test_resummarize_note_raises_for_missing_note(tmp_path):
+    from notetaker.service import resummarize_note
+
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    with pytest.raises(ServiceError, match="no note found"):
+        resummarize_note(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "nonexistent")
+
+
+def test_resummarize_note_raises_when_no_transcript_sidecar(tmp_path):
+    from notetaker.service import resummarize_note
+
+    notes_dir = tmp_path / "notes"
+    write_note(notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("old", [], []), ["hello"])
+    # write_note alone doesn't create the sidecar — only stop_session does — so this note has none
+    with pytest.raises(ServiceError, match="no persisted transcript"):
+        resummarize_note(
+            Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup"
+        )
+
+
+def test_resummarize_note_replaces_summary_from_sidecar(monkeypatch, tmp_path):
+    from notetaker.service import resummarize_note
+
+    notes_dir = tmp_path / "notes"
+    note_path = write_note(
+        notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("old summary", [], []), ["[00:00:01] hello"]
+    )
+    (notes_dir / f"{note_path.stem}.transcript.txt").write_text("[00:00:01] hello\n")
+
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+    monkeypatch.setattr(
+        "notetaker.service.summarize_transcript",
+        lambda transcript, provider: Summary(text="new summary", action_items=["new item"], tags=["new-tag"]),
+    )
+
+    result_path = resummarize_note(
+        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup"
+    )
+
+    assert result_path == note_path
+    text = note_path.read_text()
+    assert "new summary" in text
+    assert "old summary" not in text
+
+
+def test_resummarize_note_saves_fallback_summary_when_provider_fails(monkeypatch, tmp_path):
+    from notetaker.service import resummarize_note
+
+    notes_dir = tmp_path / "notes"
+    note_path = write_note(
+        notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("old summary", [], []), ["[00:00:01] hello"]
+    )
+    (notes_dir / f"{note_path.stem}.transcript.txt").write_text("[00:00:01] hello\n")
+
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+
+    def raise_error(transcript, provider):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("notetaker.service.summarize_transcript", raise_error)
+
+    resummarize_note(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup")
+
+    assert "Summarization failed" in note_path.read_text()
+
+
 def test_get_masked_provider_credential_returns_masked_value(monkeypatch, tmp_path):
     from notetaker.service import get_masked_provider_credential
 
