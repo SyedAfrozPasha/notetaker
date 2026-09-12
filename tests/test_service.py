@@ -60,6 +60,14 @@ def test_start_session_fails_when_already_running(monkeypatch, tmp_path):
         start_session("Standup", _config(tmp_path), tmp_path)
 
 
+def test_start_session_refuses_while_a_stop_is_in_progress(monkeypatch, tmp_path):
+    session_file = tmp_path / "current_session.json"
+    session_file.with_suffix(".salvaging").write_text("{}")
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    with pytest.raises(ServiceError, match="currently being stopped"):
+        start_session("Standup", _config(tmp_path), tmp_path)
+
+
 def test_start_session_ignores_corrupt_session_file_and_starts_new_one(monkeypatch, tmp_path):
     session_file = tmp_path / "current_session.json"
     session_file.write_text("{invalid json")
@@ -719,22 +727,31 @@ def test_cancel_session_raises_when_no_active_session(tmp_path):
 def test_check_and_salvage_orphan_does_not_double_salvage_during_stop_session(monkeypatch, tmp_path):
     session_dir = tmp_path / "sessions" / "20260911-100000"
     session_dir.mkdir(parents=True)
-    (tmp_path / "current_session.json").write_text("{}")
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {
+                "pid": 999999,
+                "title": "Standup",
+                "start_time": "2026-09-11T10:00:00",
+                "session_dir": str(session_dir),
+            }
+        )
+    )
     notes_dir = tmp_path / "notes"
     monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
 
-    info = _session_info(session_dir)
     config = Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
 
-    # Simulate check_and_salvage_orphan's poll landing in the middle of a
-    # stop_session that already claimed the file (recorder already dead,
-    # summarization API call still in flight).
+    # Simulate check_and_salvage_orphan's poll landing while a stop_session
+    # (or another finalizer) is already mid-flight and holds the claim.
     claim = _claim_session_file(tmp_path)
     assert claim is not None
 
     result = check_and_salvage_orphan(config, tmp_path)
 
     assert result is None
+    assert not notes_dir.exists()
 
 
 def test_get_current_session_status_returns_none_when_no_session_file(tmp_path):
