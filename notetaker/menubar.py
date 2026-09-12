@@ -1,9 +1,15 @@
 from datetime import datetime
 from pathlib import Path
 
+import rumps
+
+from notetaker import service
+from notetaker.config import CONFIG_DIR, ConfigError, load_config
 from notetaker.service import SessionInfo
 
 IDLE_TITLE = "Notetaker"
+POLL_INTERVAL_SECONDS = 2
+SETUP_WARNING_TITLE = "⚠️ Notetaker"
 
 
 def format_elapsed(start_time: datetime, now: datetime) -> str:
@@ -36,3 +42,66 @@ def note_summarization_failed(note_path: Path) -> bool:
     matches the exact fallback text `_summarize_or_fallback` writes.
     """
     return "Summarization failed:" in note_path.read_text()
+
+
+class NotetakerMenuBarApp(rumps.App):
+    def __init__(self):
+        super().__init__(IDLE_TITLE, quit_button="Quit")
+        self._toggle_item = rumps.MenuItem("Start Recording", callback=self._on_toggle)
+        self.menu = [self._toggle_item]
+        self._timer = rumps.Timer(self._on_tick, POLL_INTERVAL_SECONDS)
+        self._timer.start()
+
+    def _on_tick(self, _timer):
+        try:
+            config = load_config()
+        except ConfigError:
+            self.title = SETUP_WARNING_TITLE
+            self._toggle_item.title = "Start Recording"
+            return
+        try:
+            salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
+        except Exception:
+            salvaged_path = None
+        if salvaged_path is not None:
+            self._notify("Recovered a crashed session", "Saved as a note", salvaged_path.name)
+        info = service.get_current_session_status(CONFIG_DIR)
+        self.title = menu_bar_title(info, datetime.now())
+        self._toggle_item.title = toggle_item_title(info)
+
+    def _on_toggle(self, _sender):
+        try:
+            config = load_config()
+        except ConfigError as exc:
+            rumps.alert(title="Notetaker is not set up", message=str(exc))
+            return
+        info = service.get_current_session_status(CONFIG_DIR)
+        if info is None:
+            self._start(config)
+        else:
+            self._stop(config, info)
+
+    def _start(self, config):
+        title = auto_generated_title(datetime.now())
+        try:
+            service.start_session(title, config, CONFIG_DIR)
+        except service.ServiceError as exc:
+            rumps.alert(title="Could not start recording", message=str(exc))
+
+    def _stop(self, config, info):
+        try:
+            note_path = service.stop_session(info, config, CONFIG_DIR)
+        except Exception as exc:
+            rumps.alert(title="Could not save the recording", message=str(exc))
+            return
+        if note_summarization_failed(note_path):
+            self._notify("Recording saved", "Summarization failed", note_path.name)
+        else:
+            self._notify("Recording saved", "", note_path.name)
+
+    @staticmethod
+    def _notify(title: str, subtitle: str, message: str) -> None:
+        try:
+            rumps.notification(title=title, subtitle=subtitle, message=message)
+        except Exception:
+            pass  # best-effort — notification delivery for an unbundled script isn't guaranteed on modern macOS

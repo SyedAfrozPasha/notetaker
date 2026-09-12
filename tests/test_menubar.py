@@ -1,7 +1,12 @@
 from datetime import datetime
 from pathlib import Path
 
+import pytest
+
+from notetaker import service
+from notetaker.config import ConfigError
 from notetaker.menubar import (
+    NotetakerMenuBarApp,
     auto_generated_title,
     format_elapsed,
     menu_bar_title,
@@ -57,3 +62,164 @@ def test_note_summarization_failed_false(tmp_path):
     note_path = tmp_path / "note.md"
     note_path.write_text("## Summary\nEverything went great.\n")
     assert note_summarization_failed(note_path) is False
+
+
+@pytest.fixture
+def app():
+    instance = NotetakerMenuBarApp()
+    yield instance
+    instance._timer.stop()
+
+
+def _config(tmp_path):
+    from notetaker.config import Config
+
+    return Config(tmp_path / "notes", "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
+
+
+def test_on_tick_shows_warning_when_config_missing(app, monkeypatch):
+    def raise_config_error():
+        raise ConfigError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.menubar.load_config", raise_config_error)
+
+    app._on_tick(None)
+
+    assert "⚠️" in app.title
+
+
+def test_on_tick_updates_title_when_idle(app, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.menubar.service.check_and_salvage_orphan", lambda config, config_dir: None)
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: None)
+
+    app._on_tick(None)
+
+    assert app.title == "Notetaker"
+    assert app._toggle_item.title == "Start Recording"
+
+
+def test_on_tick_notifies_when_orphan_salvaged(app, monkeypatch, tmp_path):
+    salvaged_path = tmp_path / "notes" / "2026-09-15-standup.md"
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(
+        "notetaker.menubar.service.check_and_salvage_orphan", lambda config, config_dir: salvaged_path
+    )
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: None)
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.menubar.rumps.notification",
+        lambda title, subtitle, message: calls.append((title, subtitle, message)),
+    )
+
+    app._on_tick(None)
+
+    assert len(calls) == 1
+    assert calls[0][0] == "Recovered a crashed session"
+
+
+def test_on_toggle_shows_alert_when_config_missing(app, monkeypatch):
+    def raise_config_error():
+        raise ConfigError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.menubar.load_config", raise_config_error)
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.menubar.rumps.alert", lambda title, message: calls.append((title, message))
+    )
+
+    app._on_toggle(None)
+
+    assert len(calls) == 1
+    assert calls[0][0] == "Notetaker is not set up"
+
+
+def test_on_toggle_starts_when_idle(app, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: None)
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.menubar.service.start_session",
+        lambda title, config, config_dir: calls.append(title),
+    )
+
+    app._on_toggle(None)
+
+    assert len(calls) == 1
+    assert calls[0].startswith("Meeting ")
+
+
+def test_on_toggle_shows_alert_when_start_fails(app, monkeypatch, tmp_path):
+    from notetaker.service import ServiceError
+
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: None)
+
+    def fail(title, config, config_dir):
+        raise ServiceError("BlackHole is not active.")
+
+    monkeypatch.setattr("notetaker.menubar.service.start_session", fail)
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.menubar.rumps.alert", lambda title, message: calls.append((title, message))
+    )
+
+    app._on_toggle(None)
+
+    assert len(calls) == 1
+    assert "BlackHole is not active." in calls[0][1]
+
+
+def test_on_toggle_stops_and_notifies_when_recording(app, monkeypatch, tmp_path):
+    from datetime import datetime
+
+    info = service.SessionInfo(123, "Standup", datetime(2026, 9, 16, 10, 0, 0), tmp_path)
+    note_path = tmp_path / "notes" / "2026-09-16-standup.md"
+    note_path.parent.mkdir(parents=True)
+    note_path.write_text("## Summary\nAll good.\n")
+
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: info)
+    monkeypatch.setattr(
+        "notetaker.menubar.service.stop_session", lambda info, config, config_dir: note_path
+    )
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.menubar.rumps.notification",
+        lambda title, subtitle, message: calls.append((title, subtitle, message)),
+    )
+
+    app._on_toggle(None)
+
+    assert len(calls) == 1
+    assert calls[0] == ("Recording saved", "", "2026-09-16-standup.md")
+
+
+def test_on_toggle_notifies_summarization_failure_variant(app, monkeypatch, tmp_path):
+    from datetime import datetime
+
+    info = service.SessionInfo(123, "Standup", datetime(2026, 9, 16, 10, 0, 0), tmp_path)
+    note_path = tmp_path / "notes" / "2026-09-16-standup.md"
+    note_path.parent.mkdir(parents=True)
+    note_path.write_text("## Summary\nSummarization failed: network down\n")
+
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: info)
+    monkeypatch.setattr(
+        "notetaker.menubar.service.stop_session", lambda info, config, config_dir: note_path
+    )
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.menubar.rumps.notification",
+        lambda title, subtitle, message: calls.append((title, subtitle, message)),
+    )
+
+    app._on_toggle(None)
+
+    assert calls[0][1] == "Summarization failed"
