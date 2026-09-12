@@ -255,6 +255,7 @@ from notetaker.summarizer import AppleLocalProvider, ClaudeProvider, get_provide
 
 
 def test_get_provider_claude_reads_env_key(monkeypatch):
+    monkeypatch.setattr("notetaker.summarizer.get_provider_credential", lambda key: None)
     monkeypatch.setenv("MY_KEY", "secret")
     config = Config(
         notes_dir=None, whisper_model="base.en", ai_provider="claude",
@@ -264,7 +265,19 @@ def test_get_provider_claude_reads_env_key(monkeypatch):
     assert isinstance(provider, ClaudeProvider)
 
 
+def test_get_provider_claude_reads_keychain_credential(monkeypatch):
+    monkeypatch.setattr("notetaker.summarizer.get_provider_credential", lambda key: "sk-ant-from-keychain")
+    monkeypatch.delenv("MY_KEY", raising=False)
+    config = Config(
+        notes_dir=None, whisper_model="base.en", ai_provider="claude",
+        ai_model="claude-sonnet-5", api_key_env="MY_KEY",
+    )
+    provider = get_provider(config)
+    assert isinstance(provider, ClaudeProvider)
+
+
 def test_get_provider_claude_missing_env_key_raises(monkeypatch):
+    monkeypatch.setattr("notetaker.summarizer.get_provider_credential", lambda key: None)
     monkeypatch.delenv("MISSING_KEY", raising=False)
     config = Config(
         notes_dir=None, whisper_model="base.en", ai_provider="claude",

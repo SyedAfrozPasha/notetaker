@@ -11,6 +11,7 @@ from typing import Protocol
 import anthropic
 
 from notetaker.config import Config, ConfigError
+from notetaker.credentials import get_provider_credential
 
 
 @dataclass
@@ -214,9 +215,12 @@ def check_apple_local_preflight() -> list[str]:
 
 def get_provider(config: Config) -> Provider:
     if config.ai_provider == "claude":
-        api_key = os.environ.get(config.api_key_env)
+        api_key = get_provider_credential(config.api_key_env) or os.environ.get(config.api_key_env)
         if not api_key:
-            raise ConfigError(f"Environment variable {config.api_key_env} is not set.")
+            raise ConfigError(
+                f"No credential found for '{config.api_key_env}'. Run `notetaker set-api-key <key>`, "
+                "or export it as an environment variable."
+            )
         return ClaudeProvider(api_key=api_key, model=config.ai_model)
     if config.ai_provider == "apple_local":
         return AppleLocalProvider(model=config.ai_model)
