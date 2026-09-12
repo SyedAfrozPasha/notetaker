@@ -1,13 +1,24 @@
 import json
 import os
 import sys
+from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
 
 from notetaker.config import Config
+from notetaker.notes import write_note
 from notetaker.recorder import BlackHoleStatus
-from notetaker.service import ServiceError, pid_alive, session_file_path, start_session
+from notetaker.service import (
+    ServiceError,
+    SessionInfo,
+    pid_alive,
+    read_active_session,
+    session_file_path,
+    start_session,
+    stop_session,
+)
+from notetaker.summarizer import Summary
 
 
 def test_session_file_path_is_under_config_dir(tmp_path):
@@ -99,3 +110,91 @@ def test_start_session_fails_when_recorder_exits_immediately(monkeypatch, tmp_pa
         start_session("Standup", _config(tmp_path), tmp_path)
 
     assert not (tmp_path / "current_session.json").exists()
+
+
+def test_read_active_session_fails_when_no_session_file(tmp_path):
+    with pytest.raises(ServiceError, match="no active session"):
+        read_active_session(tmp_path)
+
+
+def test_read_active_session_fails_on_corrupt_file(tmp_path):
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text("{not valid json")
+    with pytest.raises(ServiceError, match="corrupt or unreadable"):
+        read_active_session(tmp_path)
+
+
+def test_read_active_session_parses_valid_file(tmp_path):
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {"pid": 999999, "title": "Standup", "start_time": "2026-09-11T10:00:00", "session_dir": str(tmp_path)}
+        )
+    )
+    info = read_active_session(tmp_path)
+    assert info == SessionInfo(999999, "Standup", datetime(2026, 9, 11, 10, 0), tmp_path)
+
+
+def _session_info(session_dir):
+    return SessionInfo(pid=999999, title="Standup", start_time=datetime(2026, 9, 11, 10, 0), session_dir=session_dir)
+
+
+def test_stop_session_skips_provider_call_when_transcript_empty(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text("{}")  # presence is all stop_session checks for cleanup
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+
+    def fail_if_called(*a, **k):
+        raise AssertionError("get_provider should not be called for an empty transcript")
+
+    monkeypatch.setattr("notetaker.service.get_provider", fail_if_called)
+    monkeypatch.setattr("notetaker.service.summarize_transcript", fail_if_called)
+
+    note_path = stop_session(_session_info(session_dir), Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path)
+
+    assert "No audio was captured" in note_path.read_text()
+    assert not session_dir.exists()
+    assert not session_file.exists()
+
+
+def test_stop_session_salvages_transcript_and_writes_note(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n[00:00:07] world\n")
+    (tmp_path / "current_session.json").write_text("{}")
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+    monkeypatch.setattr(
+        "notetaker.service.summarize_transcript",
+        lambda transcript, provider: Summary(text="summary text", action_items=["a"], tags=["t"]),
+    )
+
+    note_path = stop_session(_session_info(session_dir), Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path)
+
+    assert "summary text" in note_path.read_text()
+    assert not session_dir.exists()
+
+
+def test_stop_session_saves_note_with_error_when_summarization_fails(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n")
+    (tmp_path / "current_session.json").write_text("{}")
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+
+    def raise_error(transcript, provider):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr("notetaker.service.summarize_transcript", raise_error)
+
+    note_path = stop_session(_session_info(session_dir), Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path)
+
+    text = note_path.read_text()
+    assert "Summarization failed" in text
+    assert "hello" in text
