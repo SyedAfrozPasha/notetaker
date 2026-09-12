@@ -12,6 +12,8 @@ from notetaker.recorder import BlackHoleStatus
 from notetaker.service import (
     ServiceError,
     SessionInfo,
+    get_note_body,
+    list_all_notes,
     pid_alive,
     read_active_session,
     session_file_path,
@@ -198,3 +200,25 @@ def test_stop_session_saves_note_with_error_when_summarization_fails(monkeypatch
     text = note_path.read_text()
     assert "Summarization failed" in text
     assert "hello" in text
+
+
+def test_list_all_notes_returns_notes_sorted_by_date(tmp_path):
+    notes_dir = tmp_path / "notes"
+    write_note(notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], ["proj"]), [])
+    metas = list_all_notes(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"))
+    assert len(metas) == 1
+    assert metas[0].title == "Standup"
+
+
+def test_get_note_body_returns_body_text(tmp_path):
+    notes_dir = tmp_path / "notes"
+    write_note(notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("Summary text", [], []), ["[00:00:01] hi"])
+    body = get_note_body(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup")
+    assert "Summary text" in body
+
+
+def test_get_note_body_raises_for_missing_note(tmp_path):
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    with pytest.raises(ServiceError, match="no note found"):
+        get_note_body(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "nonexistent")

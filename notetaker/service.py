@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 from notetaker.config import Config
-from notetaker.notes import write_note
+from notetaker.notes import NoteMeta, find_note_path, list_notes, read_note_body, write_note
 from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
 from notetaker.summarizer import Summary, get_provider, summarize_transcript
 
@@ -142,3 +142,14 @@ def stop_session(info: SessionInfo, config: Config, config_dir: Path) -> Path:
     session_file.unlink()
 
     return note_path
+
+
+def list_all_notes(config: Config) -> list[NoteMeta]:
+    return list_notes(config.notes_dir)
+
+
+def get_note_body(config: Config, note_id: str) -> str:
+    path = find_note_path(config.notes_dir, note_id)
+    if path is None:
+        raise ServiceError(f"no note found with id '{note_id}'.")
+    return read_note_body(path)
