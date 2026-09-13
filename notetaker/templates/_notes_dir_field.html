@@ -1,0 +1,8 @@
+{# The notes-directory input plus its "Choose in Finder…" button. Rendered inside
+   settings.html and re-rendered on its own by POST /settings/browse. #}
+<div id="notes-dir-field" class="field-row">
+  <input type="text" name="notes_dir" value="{{ value }}" required>
+  <button type="button" class="btn" hx-post="/settings/browse" hx-include="#notes-dir-field input" hx-target="#notes-dir-field" hx-swap="outerHTML">Choose in Finder…</button>
+  {% if error %}<span class="hint error">{{ error }}</span>{% endif %}
+  {% if picked %}<span class="hint">Folder chosen — click Save configuration to apply it.</span>{% endif %}
+</div>

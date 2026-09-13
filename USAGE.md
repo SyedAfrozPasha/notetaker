@@ -415,7 +415,8 @@ What it offers:
 - **Note detail** (`/notes/<id>`) — full note view with copy buttons, an **Edit** page
   (title, tags, summary text, action items), **Delete**, and **Resummarize**.
 - **Settings** (`/settings`) — change every config value without hand-editing the YAML
-  file: notes directory, Whisper model and offline model path, whether to record your
+  file: notes directory (type a path, or click **Choose in Finder…** to pick the folder in
+  macOS's own folder dialog, then **Save configuration**), Whisper model and offline model path, whether to record your
   microphone, the meeting audio source (tap or BlackHole) and the tap-only-this-app
   bundle id, AI provider and model. Switching provider fills in that provider's default
   model. When the provider is Claude, a section appears to set/replace the API key

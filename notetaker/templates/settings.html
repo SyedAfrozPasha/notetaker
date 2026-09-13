@@ -11,7 +11,9 @@
   <form method="post" action="/settings/config">
     <fieldset>
       <legend>Storage</legend>
-      <label>Notes directory <input type="text" name="notes_dir" value="{{ config.notes_dir }}" required></label>
+      <label>Notes directory
+        {% with value = config.notes_dir %}{% include "_notes_dir_field.html" %}{% endwith %}
+      </label>
     </fieldset>
 
     <fieldset>

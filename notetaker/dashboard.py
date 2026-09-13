@@ -1,5 +1,6 @@
 import re
 import socket
+import subprocess
 import threading
 import time
 from dataclasses import dataclass
@@ -559,6 +560,52 @@ def settings_update_config(
         )
 
     return RedirectResponse("/settings", status_code=303)
+
+
+def _applescript_string(value: str) -> str:
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def pick_folder_with_finder(start_dir: Path | None = None) -> Path | None:
+    """Opens macOS's native folder picker (the Finder-style `choose folder`
+    dialog, via osascript) and returns the directory the user picked, or
+    None if they cancelled. Runs as a subprocess on purpose: the picker
+    must not run on the web server thread, and osascript puts the dialog
+    on the main thread of its own process, whatever process hosts us.
+    Raises RuntimeError with a readable message on any other failure."""
+    script = 'tell me to activate\nPOSIX path of (choose folder with prompt "Choose where Notetaker saves notes"'
+    if start_dir is not None and start_dir.is_dir():
+        script += f' default location (POSIX file "{_applescript_string(str(start_dir))}")'
+    script += ")"
+    try:
+        result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=600)
+    except FileNotFoundError as exc:
+        raise RuntimeError("osascript not found — the Finder picker needs macOS.") from exc
+    except subprocess.TimeoutExpired:
+        return None
+    if result.returncode != 0:
+        if "User canceled" in result.stderr or "(-128)" in result.stderr:
+            return None
+        raise RuntimeError(result.stderr.strip() or f"osascript exited with status {result.returncode}")
+    chosen = result.stdout.strip()
+    if not chosen:
+        return None
+    return Path(chosen.rstrip("/") or "/")
+
+
+@app.post("/settings/browse", response_class=HTMLResponse)
+def settings_browse_notes_dir(request: Request, notes_dir: str = Form("")):
+    """Re-renders just the notes-directory field with the folder picked in
+    Finder (nothing is saved until the user submits the settings form)."""
+    context = {"value": notes_dir}
+    start = Path(notes_dir).expanduser() if notes_dir.strip() else None
+    try:
+        chosen = pick_folder_with_finder(start)
+    except RuntimeError as exc:
+        return templates.TemplateResponse(request, "_notes_dir_field.html", {**context, "error": str(exc)})
+    if chosen is not None:
+        context = {"value": str(chosen), "picked": True}
+    return templates.TemplateResponse(request, "_notes_dir_field.html", context)
 
 
 @app.post("/settings/credential", response_class=HTMLResponse)
