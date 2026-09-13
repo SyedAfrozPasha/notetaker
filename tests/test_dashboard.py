@@ -123,6 +123,88 @@ def test_status_continues_when_salvage_raises_unexpectedly(client, monkeypatch, 
     assert "Not recording" in response.text
 
 
+def test_start_creates_session_and_shows_recording_state(client, monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    calls = {}
+
+    def fake_start_session(title, config, config_dir, tags=None):
+        calls["title"] = title
+        calls["tags"] = tags
+        return info
+
+    monkeypatch.setattr("notetaker.dashboard.service.start_session", fake_start_session)
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
+    monkeypatch.setattr("notetaker.dashboard.service.get_live_transcript_preview", lambda info: "")
+
+    response = client.post("/start", data={"title": "Standup", "tags": "project-x, planning"})
+
+    assert response.status_code == 200
+    assert "Recording" in response.text
+    assert calls["title"] == "Standup"
+    assert calls["tags"] == ["project-x", "planning"]
+
+
+def test_start_with_no_tags_passes_empty_list(client, monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    calls = {}
+
+    def fake_start_session(title, config, config_dir, tags=None):
+        calls["tags"] = tags
+        return info
+
+    monkeypatch.setattr("notetaker.dashboard.service.start_session", fake_start_session)
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
+    monkeypatch.setattr("notetaker.dashboard.service.get_live_transcript_preview", lambda info: "")
+
+    client.post("/start", data={"title": "Standup", "tags": ""})
+
+    assert calls["tags"] == []
+
+
+def test_start_shows_error_when_service_raises(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+
+    def fail(title, config, config_dir, tags=None):
+        raise service.ServiceError("BlackHole is not active. Run `notetaker init` for setup instructions.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.start_session", fail)
+
+    response = client.post("/start", data={"title": "Standup", "tags": ""})
+
+    assert response.status_code == 200
+    assert "BlackHole is not active" in response.text
+    assert "Not recording" in response.text
+
+
+def test_start_shows_setup_error_when_config_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+
+    def fail(path):
+        raise service.ServiceError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", fail)
+
+    response = client.post("/start", data={"title": "Standup", "tags": ""})
+
+    assert response.status_code == 200
+    assert "not set up" in response.text
+
+
 def test_format_elapsed_under_an_hour():
     from notetaker.dashboard import _format_elapsed
 

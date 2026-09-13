@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -55,3 +55,19 @@ async def status(request: Request):
 
     context.update(_status_context(config))
     return templates.TemplateResponse(request, "_status.html", context)
+
+
+@app.post("/start", response_class=HTMLResponse)
+async def start(request: Request, title: str = Form(...), tags: str = Form("")):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "_status.html", {"setup_error": str(exc)})
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    try:
+        service.start_session(title, config, CONFIG_DIR, tags=tag_list)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "_status.html", {"recording": False, "error": str(exc)})
+
+    return templates.TemplateResponse(request, "_status.html", _status_context(config))
