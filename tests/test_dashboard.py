@@ -108,10 +108,13 @@ def test_status_continues_when_salvage_raises_unexpectedly(client, monkeypatch, 
     monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
     monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
 
-    def raise_disk_error(config, config_dir):
-        raise OSError("disk full")
+    def raise_unexpected_error(config, config_dir):
+        # A type unrelated to any plausible narrower catch clause (OSError,
+        # ServiceError) — proves the route's except clause is a genuinely
+        # bare `except Exception`, not merely `except OSError`.
+        raise RuntimeError("boom")
 
-    monkeypatch.setattr("notetaker.dashboard.service.check_and_salvage_orphan", raise_disk_error)
+    monkeypatch.setattr("notetaker.dashboard.service.check_and_salvage_orphan", raise_unexpected_error)
     monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
 
     response = client.get("/status")
