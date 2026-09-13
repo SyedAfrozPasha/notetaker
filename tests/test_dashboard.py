@@ -10,7 +10,10 @@ from notetaker.dashboard import app
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    # base_url matters: TrustedHostMiddleware only allows 127.0.0.1/localhost,
+    # and TestClient's default base_url ("http://testserver") would send a
+    # Host header that gets rejected.
+    return TestClient(app, base_url="http://127.0.0.1")
 
 
 def test_index_page_loads_and_wires_the_status_poller(client):
@@ -44,6 +47,12 @@ def test_status_shows_idle_state_with_start_form(client, monkeypatch, tmp_path):
     assert response.status_code == 200
     assert "Not recording" in response.text
     assert 'hx-post="/start"' in response.text
+    # id + hx-preserve keep htmx from tearing down (and re-creating, losing
+    # any typed value/focus in) this form on the outer status div's own
+    # 2-second poll cycle — htmx's swap algorithm matches on this exact
+    # id+hx-preserve pairing to keep the existing DOM node in place.
+    assert 'id="start-form"' in response.text
+    assert 'hx-preserve="true"' in response.text
 
 
 def test_status_shows_recording_state_with_elapsed_and_transcript(client, monkeypatch, tmp_path):
@@ -205,6 +214,50 @@ def test_start_shows_setup_error_when_config_missing(client, monkeypatch, tmp_pa
     assert "not set up" in response.text
 
 
+def test_start_shows_error_and_recording_state_when_a_session_is_already_active(client, monkeypatch, tmp_path):
+    # start_session's own "already running"/"currently being stopped" guards
+    # are exactly the cases where a session IS (or may be) active — the
+    # error branch must re-derive status, not hardcode idle, or the page
+    # would show a Start form for a session that's still recording.
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
+    monkeypatch.setattr("notetaker.dashboard.service.get_live_transcript_preview", lambda info: "")
+
+    def fail(title, config, config_dir, tags=None):
+        raise service.ServiceError("a session is already running. Run `notetaker stop` first.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.start_session", fail)
+
+    response = client.post("/start", data={"title": "Standup", "tags": ""})
+
+    assert response.status_code == 200
+    assert "already running" in response.text
+    assert "Recording" in response.text
+
+
+def test_start_shows_error_when_unexpected_exception_raised(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
+
+    def fail(title, config, config_dir, tags=None):
+        raise OSError("recorder failed to start — see recorder.log for details")
+
+    monkeypatch.setattr("notetaker.dashboard.service.start_session", fail)
+
+    response = client.post("/start", data={"title": "Standup", "tags": ""})
+
+    assert response.status_code == 200
+    assert "recorder failed to start" in response.text
+
+
 def test_stop_saves_note_and_shows_success(client, monkeypatch, tmp_path):
     session_dir = tmp_path / "sessions" / "20260911-100000"
     session_dir.mkdir(parents=True)
@@ -352,3 +405,39 @@ def test_format_elapsed_over_an_hour():
     from notetaker.dashboard import _format_elapsed
 
     assert _format_elapsed(datetime(2026, 9, 11, 10, 0, 0), datetime(2026, 9, 11, 11, 2, 3)) == "1:02:03"
+
+
+def test_rejects_post_with_cross_site_fetch_metadata(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
+
+    response = client.post("/cancel", headers={"Sec-Fetch-Site": "cross-site"})
+
+    assert response.status_code == 403
+
+
+def test_allows_post_with_no_fetch_metadata(client, monkeypatch, tmp_path):
+    # Non-browser local tools (curl, scripts, this test's own client) don't
+    # send Sec-Fetch-Site at all — only an explicit "cross-site" is rejected.
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
+
+    response = client.post("/cancel")
+
+    assert response.status_code == 200
+
+
+def test_rejects_request_with_untrusted_host_header(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+
+    untrusted_client = TestClient(app, base_url="http://evil.example")
+
+    response = untrusted_client.get("/status")
+
+    assert response.status_code == 400

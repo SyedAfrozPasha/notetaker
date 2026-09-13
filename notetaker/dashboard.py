@@ -4,12 +4,29 @@ from pathlib import Path
 from fastapi import FastAPI, Form, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from notetaker import service
 from notetaker.config import CONFIG_DIR, CONFIG_PATH, Config
 
 app = FastAPI()
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+
+
+@app.middleware("http")
+async def _reject_cross_site_posts(request: Request, call_next):
+    """Binding to 127.0.0.1 stops other machines, not the user's own
+    browser — any page open in the same browser could otherwise submit a
+    cross-origin form straight to this app (e.g. POST /cancel, which
+    irreversibly discards an in-progress Session's Transcript with no Note
+    produced). Modern browsers attach Sec-Fetch-Site to every request;
+    reject only when it explicitly says cross-site, so non-browser local
+    tools (which don't send this header at all) are unaffected.
+    """
+    if request.method == "POST" and request.headers.get("sec-fetch-site") == "cross-site":
+        return HTMLResponse("Cross-site requests are not allowed.", status_code=403)
+    return await call_next(request)
 
 
 def _format_elapsed(start_time: datetime, now: datetime) -> str:
@@ -67,8 +84,10 @@ async def start(request: Request, title: str = Form(...), tags: str = Form("")):
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     try:
         service.start_session(title, config, CONFIG_DIR, tags=tag_list)
-    except service.ServiceError as exc:
-        return templates.TemplateResponse(request, "_status.html", {"recording": False, "error": str(exc)})
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request, "_status.html", {**_status_context(config), "error": str(exc)}
+        )
 
     return templates.TemplateResponse(request, "_status.html", _status_context(config))
 

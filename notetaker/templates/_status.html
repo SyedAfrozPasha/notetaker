@@ -15,7 +15,7 @@
 <p class="idle">Not recording.</p>
 {% if success %}<p class="success">{{ success }}</p>{% endif %}
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
-<form hx-post="/start" hx-target="#status" hx-swap="innerHTML">
+<form id="start-form" hx-preserve="true" hx-post="/start" hx-target="#status" hx-swap="innerHTML">
   <label>Title <input type="text" name="title" required></label>
   <label>Tags (comma-separated) <input type="text" name="tags"></label>
   <button type="submit">Start Recording</button>
