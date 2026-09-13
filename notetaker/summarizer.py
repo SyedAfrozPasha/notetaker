@@ -198,6 +198,55 @@ Transcript:
 """
 
 
+_LEADING_BULLET = re.compile(r"^(?:[-*•]\s+)+")
+
+
+def _text_as_minutes(value) -> str:
+    """The prompt asks for "text" as one string of headed bullet points, but
+    a small model often answers with the structure itself: a list of
+    points, or a {"Discussion": [...], "Decisions": [...]} mapping (nested
+    either way). Render those as Markdown-ish minutes instead of leaking a
+    Python repr like "['point one', 'point two']" into the note."""
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    lines: list[str] = []
+
+    def _bullet(indent: str, item) -> str:
+        # The model often bullets its list items itself ("- point"); don't double it.
+        return f"{indent}- {_LEADING_BULLET.sub('', str(item).strip())}"
+
+    def _emit(item, depth: int = 0) -> None:
+        indent = "  " * depth
+        if isinstance(item, dict):
+            for key, sub in item.items():
+                lines.append(f"{indent}{key}:")
+                _emit(sub, depth + 1)
+                lines.append("")
+        elif isinstance(item, (list, tuple)):
+            for sub in item:
+                if isinstance(sub, (dict, list, tuple)):
+                    _emit(sub, depth)
+                else:
+                    lines.append(_bullet(indent, sub))
+        else:
+            lines.append(_bullet(indent, item))
+
+    _emit(value)
+    return "\n".join(lines).strip()
+
+
+_INLINE_HEADING = re.compile(r"(?<!\n)\s+((?:Decisions|Open questions|Action items|Next steps):)")
+
+
+def format_minutes(text: str) -> str:
+    """A small model often runs the requested headings together on one line
+    ("Discussion: … Decisions: … Open questions: …"). Put each heading on
+    its own paragraph so the note reads as minutes, not a blob."""
+    return _INLINE_HEADING.sub(r"\n\n\1", text).strip()
+
+
 def _summary_from_data(data: dict) -> Summary:
     """Coerces the model's JSON into a Summary, tolerating a null or scalar
     where a list was asked for — a malformed field must not crash note
@@ -214,7 +263,7 @@ def _summary_from_data(data: dict) -> Summary:
         return [str(item) for item in value]
 
     return Summary(
-        text=str(data["text"]),
+        text=format_minutes(_text_as_minutes(data["text"])),
         action_items=_as_list(data.get("action_items")),
         tags=_as_list(data.get("tags")),
     )
