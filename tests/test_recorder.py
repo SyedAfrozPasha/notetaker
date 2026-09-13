@@ -285,6 +285,9 @@ def test_live_capture_pads_silence_when_a_source_stalls_and_reports_once(monkeyp
             pass
 
     monkeypatch.setattr("notetaker.recorder.sd.InputStream", FakeStream)
+    # Freeze the clock: this test is about stall padding, not lead-in alignment
+    # (covered by test_live_capture_aligns_late_starting_source_with_leading_silence).
+    monkeypatch.setattr("notetaker.recorder.time.monotonic", lambda: 100.0)
     stalls = []
     capture = LiveCapture(system_device=7, mic_device="default", sample_rate=100, on_stall=stalls.append)
     capture.STALL_SECONDS = 0.01
@@ -481,3 +484,55 @@ def test_main_tap_mode_hard_exits_nonzero_when_recording_crashes(monkeypatch, tm
     recorder.main(["--session-dir", str(tmp_path), "--model", "base.en", "--system-audio", "tap"])
 
     assert events == ["tap.close", ("hard_exit", 1)]
+
+
+def test_live_capture_aligns_late_starting_source_with_leading_silence(monkeypatch):
+    import numpy as np
+
+    from notetaker.recorder import LiveCapture
+
+    started = []
+
+    class FakeStream:
+        def __init__(self, device, channels, samplerate, dtype, callback):
+            self.callback = callback
+            started.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("notetaker.recorder.sd.InputStream", FakeStream)
+    clock = {"now": 100.0}
+    monkeypatch.setattr("notetaker.recorder.time.monotonic", lambda: clock["now"])
+    capture = LiveCapture(system_device=7, mic_device="default", sample_rate=100)
+    capture.STALL_SECONDS = 0.01
+    mic_stream, tap_stream = started
+
+    # Mic delivers from the start; the tap only starts 0.4s in (an app began playing).
+    clock["now"] = 100.1
+    mic_stream.callback(np.full((10, 1), 11, dtype=np.int16), 10, None, None)
+    clock["now"] = 100.5
+    tap_stream.callback(np.full((10, 1), 22, dtype=np.int16), 10, None, None)
+    clock["now"] = 101.0
+    mic_stream.callback(np.full((90, 1), 11, dtype=np.int16), 90, None, None)
+    tap_stream.callback(np.full((50, 1), 22, dtype=np.int16), 50, None, None)
+
+    import tempfile
+    import wave
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "chunk.wav")
+        capture.capture_chunk(1, out)
+        with wave.open(out, "rb") as wf:
+            frames = np.frombuffer(wf.readframes(100), dtype=np.int16).reshape(-1, 2)
+    # Tap channel: 40 samples of lead-in silence (0.5s - 0.1s of block), then audio.
+    assert set(frames[:40, 1]) == {0}
+    assert set(frames[40:, 1]) == {22}
+    assert set(frames[:, 0]) == {11}
+    capture.close()

@@ -119,12 +119,15 @@ def test_drop_echoes_removes_mic_copy_of_meeting_audio_but_keeps_real_speech():
         (70.0, "Me", "There has been a lot of hype around"),  # same words, far away in time: kept
         (80.0, "Others", "Shall we move on to the next topic, any objections?"),
         (80.5, "Me", "Yes"),  # short fragment: never treated as an echo by containment
+        (90.0, "Others", "and write code or pseudo code on the spot."),
+        (91.5, "Me", "the spot."),  # echo tail, verbatim inside the Others line: dropped
     ]
 
     kept = drop_echoes(spoken)
 
     assert [(s, l) for s, l, _ in kept] == [
         (33.0, "Others"), (40.0, "Others"), (41.0, "Me"), (70.0, "Me"), (80.0, "Others"), (80.5, "Me"),
+        (90.0, "Others"),
     ]
 
 
@@ -140,3 +143,28 @@ def test_transcribe_chunk_drops_echo_lines(tmp_path):
         "[00:00:00] Others: There has been a lot of hype around model context protocol",
         "[00:00:06] Me: good question",
     ]
+
+
+def test_drop_echoes_uses_previous_chunk_others_across_boundary():
+    from notetaker.transcriber import drop_echoes
+
+    # Others said this at 8.5s of the previous chunk (-1.5s relative to this one);
+    # the mic's echo begins in this chunk at 0.2s.
+    previous = [(-1.5, "provide an extremely simple explanation of MCP today")]
+    spoken = [(0.2, "Me", "an extremely simple explanation of MCP today"), (3.0, "Me", "Thanks, that helps.")]
+
+    kept = drop_echoes(spoken, previous_others=previous)
+
+    assert kept == [(3.0, "Me", "Thanks, that helps.")]
+
+
+def test_transcriber_remembers_previous_chunk_others_for_echo_removal(tmp_path):
+    wav_path = tmp_path / "chunk.wav"
+    _write_stereo_wav(wav_path)
+    first = FakePerChannelModel(me_segments=[], others_segments=[(8.5, "provide an extremely simple explanation of MCP today")])
+    transcriber = Transcriber("base.en", _model=first)
+    transcriber.transcribe_chunk(wav_path, elapsed_seconds=0)
+
+    second = FakePerChannelModel(me_segments=[(0.2, "an extremely simple explanation of MCP today")], others_segments=[])
+    transcriber._model = second
+    assert transcriber.transcribe_chunk(wav_path, elapsed_seconds=10) == ""

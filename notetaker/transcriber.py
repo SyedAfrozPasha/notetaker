@@ -14,6 +14,7 @@ ECHO_WINDOW_SECONDS = 4.0  # a mic echo of the speakers lands within this of the
 ECHO_SIMILARITY = 0.6  # difflib ratio above which a Me segment is treated as an echo of an Others one
 ECHO_CONTAINMENT = 0.8  # or: this share of the Me text appears verbatim inside the Others text
 ECHO_MIN_CHARS = 12  # ignore containment for very short fragments ("yes", "okay") — too easy to match
+ECHO_VERBATIM_MIN_CHARS = 6  # but a fragment this long that appears verbatim in the Others text is an echo tail
 
 
 def format_timestamp(seconds: float) -> str:
@@ -52,15 +53,21 @@ def _normalize(text: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", "", text.lower()).strip()
 
 
-def drop_echoes(spoken: list[tuple[float, str, str]]) -> list[tuple[float, str, str]]:
+def drop_echoes(
+    spoken: list[tuple[float, str, str]],
+    previous_others: list[tuple[float, str]] | None = None,
+) -> list[tuple[float, str, str]]:
     """Removes Me segments that are echoes of Others segments: without
     headphones the microphone also hears the speakers, so everything the
     meeting says shows up a second time, slightly garbled, under Me. A Me
     segment within ECHO_WINDOW_SECONDS of an Others segment whose text is at
     least ECHO_SIMILARITY similar is dropped. Real overlap (you talking over
-    someone) survives because the words differ.
+    someone) survives because the words differ. `previous_others` carries
+    the last chunk's Others segments (start relative to this chunk, so
+    negative) so an echo straddling a chunk boundary is caught too.
     """
     others = [(start, _normalize(text)) for start, label, text in spoken if label == "Others"]
+    others += [(start, _normalize(text)) for start, text in (previous_others or [])]
     kept = []
     for start, label, text in spoken:
         if label == "Me":
@@ -81,6 +88,10 @@ def _is_echo(mine: str, other: str) -> bool:
     matcher = difflib.SequenceMatcher(None, mine, other)
     if matcher.ratio() >= ECHO_SIMILARITY:
         return True
+    # The mic catching only the tail of a sentence ("the spot"): too short for
+    # a similarity score, but present word-for-word in the tapped original.
+    if len(mine) >= ECHO_VERBATIM_MIN_CHARS and mine in other:
+        return True
     # A short mic fragment of a long tapped sentence: whole-string similarity
     # is low, but most of the fragment appears verbatim in the original.
     if len(mine) >= ECHO_MIN_CHARS:
@@ -100,6 +111,7 @@ class Transcriber:
     ):
         """`model_path` loads a faster-whisper model from a local directory
         (no network) — for machines that cannot reach Hugging Face."""
+        self._previous_others: list[tuple[float, str]] = []  # (absolute start, text) from the last chunk
         if _model is not None:
             self._model = _model
         elif model_path:
@@ -136,7 +148,11 @@ class Transcriber:
                 text = seg.text.strip()
                 if text:
                     spoken.append((float(getattr(seg, "start", 0.0)), label, text))
-        spoken = drop_echoes(spoken)
+        previous = [(start - elapsed_seconds, text) for start, text in self._previous_others]
+        spoken = drop_echoes(spoken, previous_others=previous)
+        self._previous_others = [
+            (elapsed_seconds + start, text) for start, label, text in spoken if label == "Others"
+        ]
         spoken.sort(key=lambda item: item[0])
 
         lines: list[str] = []

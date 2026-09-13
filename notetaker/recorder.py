@@ -134,15 +134,32 @@ class LiveCapture:
         self._queues: list[queue.Queue] = []
         self._leftovers: list[np.ndarray] = []
         self._names: list[str] = []
+        self._first_block_seen: list[bool] = []
+        # Both sources are aligned to this instant: a source's first block is
+        # preceded by as much silence as elapsed before it arrived. A tap
+        # delivers nothing until an app plays, so without this its audio
+        # would start at chunk position 0 while the mic's copy of the same
+        # words sits seconds later — and the echo filter would never match.
+        self._started_at = time.monotonic()
         sources = [("microphone", mic_device), ("meeting audio", system_device)] if self.with_mic else [
             ("meeting audio", system_device)
         ]
-        for name, device in sources:
+        for index, (name, device) in enumerate(sources):
             q: queue.Queue = queue.Queue()
 
-            def _on_audio(indata, frames, time_info, status, q=q):
-                q.put(indata[:, 0].copy())
+            def _on_audio(indata, frames, time_info, status, q=q, index=index):
+                block = indata[:, 0].copy()
+                if not self._first_block_seen[index]:
+                    self._first_block_seen[index] = True
+                    lead_in = int((time.monotonic() - self._started_at) * self.sample_rate) - len(block)
+                    if lead_in > 0:
+                        q.put(np.zeros(lead_in, dtype=np.int16))
+                q.put(block)
 
+            self._queues.append(q)
+            self._leftovers.append(np.zeros(0, dtype=np.int16))
+            self._names.append(name)
+            self._first_block_seen.append(False)
             stream = sd.InputStream(
                 device=None if device == "default" else device,
                 channels=1,
@@ -152,9 +169,6 @@ class LiveCapture:
             )
             stream.start()
             self._streams.append(stream)
-            self._queues.append(q)
-            self._leftovers.append(np.zeros(0, dtype=np.int16))
-            self._names.append(name)
 
     def _read(self, source: int, frames: int, timeout: float) -> np.ndarray:
         """Up to `frames` samples from `source`, waiting at most `timeout`
