@@ -36,4 +36,4 @@ build-backend = "setuptools.build_meta"
 packages = ["notetaker"]
 
 [tool.pytest.ini_options]
-markers = ["integration: slower tests that download/run a real faster-whisper model"]
+markers = ["integration: slower tests that touch a real external system (a downloaded model, brew, etc.)"]
