@@ -83,7 +83,9 @@ class BackgroundDashboard:
 
 
 def serve_in_background(host: str, port: int) -> BackgroundDashboard:
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
+    # Default uvicorn logging (startup line + one access-log line per request)
+    # so a terminal running `notetaker dashboard` sees the server working.
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
     # uvicorn only installs its SIGINT/SIGTERM handlers on the main thread, so
     # on this thread the process's default handlers stay in charge — which is
     # what we want: `brew services stop` sends SIGTERM and the whole process

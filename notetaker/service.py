@@ -10,6 +10,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
 
+from faster_whisper import download_model
 from keyring.errors import KeyringError
 
 from notetaker.config import (
@@ -522,10 +523,45 @@ def check_setup(config: Config) -> SetupStatus:
     raise ServiceError(f"Unknown ai_provider '{config.ai_provider}'.")
 
 
-def ensure_whisper_model(config: Config) -> None:
-    """Loads (and on first run downloads) the Whisper model. On a machine
-    that cannot reach Hugging Face this is the step that fails, so the
-    error points at the offline alternative."""
+def whisper_model_is_cached(config: Config) -> bool:
+    """Whether `ensure_whisper_model` can finish without fetching from Hugging
+    Face — i.e. the named model is already in the local cache."""
+    if config.whisper_model_path:
+        return True
+    try:
+        download_model(config.whisper_model, local_files_only=True)
+    except Exception:
+        return False
+    return True
+
+
+def _download_error(config: Config, exc: Exception) -> ServiceError:
+    return ServiceError(
+        f"could not download the Whisper model '{config.whisper_model}' from Hugging Face: {exc}. "
+        "If this machine cannot reach huggingface.co, copy a faster-whisper model directory from another "
+        "machine (e.g. ~/.cache/huggingface/hub/models--Systran--faster-whisper-base.en/snapshots/<id>/) "
+        "and set whisper_model_path in ~/.notetaker/config.yaml to that directory."
+    )
+
+
+def ensure_whisper_model(config: Config, on_phase: Callable[[str], None] | None = None) -> None:
+    """Loads (and on first run downloads) the Whisper model, reporting each
+    phase through `on_phase` so the UI can show what it is waiting on — the
+    download is a one-time multi-hundred-MB fetch that faster-whisper runs
+    silently. On a machine that cannot reach Hugging Face the download is
+    the step that fails, so the error points at the offline alternative."""
+    report = on_phase or (lambda phase: None)
+    if config.whisper_model_path:
+        report(f"Loading Whisper model from '{config.whisper_model_path}'...")
+    elif whisper_model_is_cached(config):
+        report(f"Loading Whisper model '{config.whisper_model}' (already downloaded)...")
+    else:
+        report(f"Downloading Whisper model '{config.whisper_model}' from Hugging Face (one-time)...")
+        try:
+            download_model(config.whisper_model)
+        except Exception as exc:
+            raise _download_error(config, exc) from exc
+        report(f"Loading Whisper model '{config.whisper_model}'...")
     try:
         Transcriber(config.whisper_model, model_path=config.whisper_model_path)
     except Exception as exc:
@@ -535,12 +571,7 @@ def ensure_whisper_model(config: Config) -> None:
                 "It must be a faster-whisper (CTranslate2) model directory containing model.bin, config.json, "
                 "tokenizer.json and vocabulary.txt."
             ) from exc
-        raise ServiceError(
-            f"could not download the Whisper model '{config.whisper_model}' from Hugging Face: {exc}. "
-            "If this machine cannot reach huggingface.co, copy a faster-whisper model directory from another "
-            "machine (e.g. ~/.cache/huggingface/hub/models--Systran--faster-whisper-base.en/snapshots/<id>/) "
-            "and set whisper_model_path in ~/.notetaker/config.yaml to that directory."
-        ) from exc
+        raise _download_error(config, exc) from exc
 
 
 def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:

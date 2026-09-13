@@ -1,6 +1,7 @@
 import typer
 from rich.console import Console
 from rich.markup import escape
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from notetaker import service
 from notetaker.config import CONFIG_DIR, CONFIG_PATH, ConfigError, load_config
@@ -35,7 +36,8 @@ def init():
         typer.echo(f"Config already exists at {CONFIG_PATH}, skipping.")
 
     config = _load_config()
-    status = service.check_setup(config)
+    with console.status("Checking audio setup and AI provider..."):
+        status = service.check_setup(config)
 
     if status.system_audio == "tap":
         if status.system_audio_problem:
@@ -64,16 +66,35 @@ def init():
     elif config.ai_provider == "apple_local":
         typer.echo("apfel is installed and running.")
 
-    if config.whisper_model_path:
-        typer.echo(f"Loading Whisper model from '{config.whisper_model_path}'...")
-    else:
-        typer.echo(f"Loading Whisper model '{config.whisper_model}' (downloads on first run)...")
-    try:
-        service.ensure_whisper_model(config)
-    except ServiceError as exc:
-        typer.echo(f"error: {exc}", err=True)
+    # The model download is a one-time multi-hundred-MB fetch that produces
+    # no output of its own, so show which phase is running and for how long.
+    phases = []
+
+    def on_phase(phase: str) -> None:
+        phases.append(phase)
+        progress.update(task, description=escape(phase))
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    ) as progress:
+        task = progress.add_task("Preparing Whisper model...", total=None)
+        try:
+            service.ensure_whisper_model(config, on_phase=on_phase)
+        except ServiceError as exc:
+            model_error = str(exc)
+        else:
+            model_error = None
+        elapsed = progress.tasks[0].elapsed or 0.0
+    for phase in phases:
+        typer.echo(phase)
+    if model_error is not None:
+        typer.echo(f"error: {model_error}", err=True)
         raise typer.Exit(1)
-    typer.echo("Whisper model ready.")
+    typer.echo(f"Whisper model ready ({elapsed:.0f}s).")
 
 
 @app.command()
@@ -209,6 +230,8 @@ def dashboard():
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(1)
     served = dashboard_module.serve_in_background(host, port)
+    typer.echo(f"Dashboard: {served.url}")
+    typer.echo("Menu bar item is up (⏺ while recording). Press Ctrl+C, or choose Quit in the menu bar, to stop.")
     # rumps needs the main thread (Cocoa); the web server keeps running on
     # its daemon thread until Quit or SIGTERM ends the whole process.
     NotetakerMenuBarApp(dashboard_url=served.url).run()

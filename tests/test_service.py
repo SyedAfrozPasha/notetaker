@@ -455,6 +455,7 @@ def test_check_setup_reports_apple_local_problems(monkeypatch, tmp_path):
 def test_ensure_whisper_model_loads_transcriber(monkeypatch, tmp_path):
     from notetaker.service import ensure_whisper_model
     calls = []
+    monkeypatch.setattr("notetaker.service.whisper_model_is_cached", lambda config: True)
     monkeypatch.setattr("notetaker.service.Transcriber", lambda model, model_path=None: calls.append((model, model_path)))
     ensure_whisper_model(_config(tmp_path))
     assert calls == [("tiny", None)]
@@ -463,12 +464,81 @@ def test_ensure_whisper_model_loads_transcriber(monkeypatch, tmp_path):
 def test_ensure_whisper_model_explains_offline_alternative_when_download_fails(monkeypatch, tmp_path):
     from notetaker.service import ensure_whisper_model
 
-    def fail(model, model_path=None):
+    def fail(*args, **kwargs):
         raise RuntimeError("Connection to huggingface.co timed out")
 
-    monkeypatch.setattr("notetaker.service.Transcriber", fail)
+    monkeypatch.setattr("notetaker.service.whisper_model_is_cached", lambda config: False)
+    monkeypatch.setattr("notetaker.service.download_model", fail)
     with pytest.raises(ServiceError, match="whisper_model_path"):
         ensure_whisper_model(_config(tmp_path))
+
+
+def test_ensure_whisper_model_reports_download_then_load_phases_when_not_cached(monkeypatch, tmp_path):
+    from notetaker.service import ensure_whisper_model
+
+    order = []
+    monkeypatch.setattr("notetaker.service.whisper_model_is_cached", lambda config: False)
+    monkeypatch.setattr("notetaker.service.download_model", lambda model: order.append(("download", model)))
+    monkeypatch.setattr(
+        "notetaker.service.Transcriber", lambda model, model_path=None: order.append(("load", model))
+    )
+    phases = []
+
+    ensure_whisper_model(_config(tmp_path), on_phase=phases.append)
+
+    assert order == [("download", "tiny"), ("load", "tiny")]
+    assert len(phases) == 2
+    assert "Downloading" in phases[0] and "tiny" in phases[0]
+    assert "Loading" in phases[1]
+
+
+def test_ensure_whisper_model_skips_download_phase_when_cached(monkeypatch, tmp_path):
+    from notetaker.service import ensure_whisper_model
+
+    monkeypatch.setattr("notetaker.service.whisper_model_is_cached", lambda config: True)
+    monkeypatch.setattr("notetaker.service.download_model", lambda model: pytest.fail("must not download"))
+    monkeypatch.setattr("notetaker.service.Transcriber", lambda model, model_path=None: None)
+    phases = []
+
+    ensure_whisper_model(_config(tmp_path), on_phase=phases.append)
+
+    assert len(phases) == 1
+    assert "Loading" in phases[0] and "already downloaded" in phases[0]
+
+
+def test_ensure_whisper_model_reports_local_path_phase(monkeypatch, tmp_path):
+    from dataclasses import replace
+
+    from notetaker.service import ensure_whisper_model
+
+    config = replace(_config(tmp_path), whisper_model_path=str(tmp_path / "model"))
+    monkeypatch.setattr("notetaker.service.download_model", lambda model: pytest.fail("must not download"))
+    monkeypatch.setattr("notetaker.service.Transcriber", lambda model, model_path=None: None)
+    phases = []
+
+    ensure_whisper_model(config, on_phase=phases.append)
+
+    assert phases == [f"Loading Whisper model from '{tmp_path / 'model'}'..."]
+
+
+def test_whisper_model_is_cached_asks_faster_whisper_for_local_files_only(monkeypatch, tmp_path):
+    from notetaker.service import whisper_model_is_cached
+
+    calls = []
+
+    def fake_download(model, local_files_only=False):
+        calls.append((model, local_files_only))
+        return "/cache/path"
+
+    monkeypatch.setattr("notetaker.service.download_model", fake_download)
+    assert whisper_model_is_cached(_config(tmp_path)) is True
+    assert calls == [("tiny", True)]
+
+    def missing(model, local_files_only=False):
+        raise FileNotFoundError("not in cache")
+
+    monkeypatch.setattr("notetaker.service.download_model", missing)
+    assert whisper_model_is_cached(_config(tmp_path)) is False
 
 
 def test_stop_session_writes_transcript_sidecar_alongside_note(monkeypatch, tmp_path):

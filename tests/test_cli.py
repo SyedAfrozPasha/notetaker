@@ -22,13 +22,60 @@ def test_init_writes_config_and_reports_blackhole_active(monkeypatch, tmp_path):
         "notetaker.cli.service.check_setup",
         lambda config: SetupStatus(BlackHoleStatus.ACTIVE, True, []),
     )
-    monkeypatch.setattr("notetaker.cli.service.ensure_whisper_model", lambda config: None)
+    monkeypatch.setattr("notetaker.cli.service.ensure_whisper_model", lambda config, on_phase=None: None)
 
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
     assert "BlackHole is installed and active" in result.output
     assert "ANTHROPIC_API_KEY is set." in result.output
+    assert "Whisper model ready" in result.output
+
+
+def test_init_shows_each_whisper_model_phase_and_the_elapsed_time(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.service.initialize_config", lambda path: False)
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        "notetaker.cli.service.check_setup",
+        lambda config: SetupStatus(BlackHoleStatus.ACTIVE, True, []),
+    )
+
+    def fake_ensure(config, on_phase=None):
+        on_phase("Downloading Whisper model 'tiny' from Hugging Face (one-time)...")
+        on_phase("Loading Whisper model 'tiny'...")
+
+    monkeypatch.setattr("notetaker.cli.service.ensure_whisper_model", fake_ensure)
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 0
+    out = result.output
+    assert "Downloading Whisper model 'tiny'" in out
+    assert "Loading Whisper model 'tiny'" in out
+    assert out.index("Downloading") < out.index("Loading Whisper")
+    assert "Whisper model ready (" in out
+
+
+def test_init_reports_whisper_model_error_after_the_phase_it_failed_in(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.service.initialize_config", lambda path: False)
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        "notetaker.cli.service.check_setup",
+        lambda config: SetupStatus(BlackHoleStatus.ACTIVE, True, []),
+    )
+
+    def fake_ensure(config, on_phase=None):
+        on_phase("Downloading Whisper model 'tiny' from Hugging Face (one-time)...")
+        raise ServiceError("could not download the Whisper model 'tiny' from Hugging Face: offline")
+
+    monkeypatch.setattr("notetaker.cli.service.ensure_whisper_model", fake_ensure)
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 1
+    assert "Downloading Whisper model 'tiny'" in result.output
+    assert "error: could not download" in result.output
+    assert "Whisper model ready" not in result.output
 
 
 def test_init_fails_when_provider_not_ready(monkeypatch, tmp_path):
@@ -336,6 +383,8 @@ def test_dashboard_command_serves_on_localhost_and_runs_the_menu_bar_in_the_same
     assert calls["serve"] == ("127.0.0.1", 8420)
     assert calls["dashboard_url"] == "http://127.0.0.1:8420"
     assert calls["ran"] is True
+    assert "Dashboard: http://127.0.0.1:8420" in result.output
+    assert "Menu bar item is up" in result.output
 
 
 def test_dashboard_command_exits_before_showing_the_menu_bar_when_the_port_is_taken(monkeypatch):
