@@ -71,7 +71,7 @@ def test_start_prints_reminders_and_confirmation_on_success(monkeypatch, tmp_pat
     result = runner.invoke(app, ["start", "Standup"])
 
     assert result.exit_code == 0
-    assert "microphone access" in result.output
+    assert "Microphone" in result.output
     assert "Teams will not show" in result.output
     assert "Recording started: Standup" in result.output
 

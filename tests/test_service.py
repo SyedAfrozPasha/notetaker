@@ -42,8 +42,12 @@ def test_pid_alive_false_for_nonexistent_pid():
     assert pid_alive(999999) is False
 
 
-def _config(tmp_path):
-    return Config(tmp_path / "notes", "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
+def _config(tmp_path, **overrides):
+    # BlackHole mode by default: most of these tests exercise the BlackHole
+    # path explicitly. Tap-mode tests pass system_audio="tap".
+    fields = dict(system_audio="blackhole")
+    fields.update(overrides)
+    return Config(tmp_path / "notes", "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY", **fields)
 
 
 def test_start_session_fails_when_blackhole_not_active(monkeypatch, tmp_path):
@@ -107,7 +111,9 @@ def test_start_session_writes_session_file_and_spawns_recorder(monkeypatch, tmp_
     assert info.title == "Standup"
     assert info.warnings == []
     assert captured_cmd["cmd"] == [
-        sys.executable, "-m", "notetaker.recorder", str(info.session_dir), "2", "tiny", "default", "",
+        sys.executable, "-m", "notetaker.recorder",
+        "--session-dir", str(info.session_dir), "--model", "tiny", "--model-path", "", "--mic", "default",
+        "--system-audio", "blackhole", "--system-device", "2",
     ]
     session = json.loads((tmp_path / "current_session.json").read_text())
     assert session == {
@@ -1201,7 +1207,7 @@ def test_start_session_reports_routing_warnings_and_disables_mic_when_input_is_b
     info = start_session("Standup", _config(tmp_path), tmp_path)
 
     assert info.warnings == ["output is MacBook Pro Speakers", "input is BlackHole 2ch"]
-    assert captured_cmd["cmd"][-2:] == ["none", ""]
+    assert captured_cmd["cmd"][captured_cmd["cmd"].index("--mic") + 1] == "none"
 
 
 def test_start_session_passes_model_path_and_skips_mic_when_disabled(monkeypatch, tmp_path):
@@ -1215,11 +1221,57 @@ def test_start_session_passes_model_path_and_skips_mic_when_disabled(monkeypatch
     )
     monkeypatch.setattr("notetaker.service.check_output_routing", lambda: None)
     monkeypatch.setattr("notetaker.service.check_microphone_routing", lambda: (_ for _ in ()).throw(AssertionError("not called")))
-    config = Config(tmp_path, "tiny", "apple_local", "m", "K", whisper_model_path="/models/base.en", capture_microphone=False)
+    config = Config(
+        tmp_path, "tiny", "apple_local", "m", "K",
+        whisper_model_path="/models/base.en", capture_microphone=False, system_audio="blackhole",
+    )
 
     start_session("Standup", config, tmp_path)
 
-    assert captured_cmd["cmd"][-2:] == ["none", "/models/base.en"]
+    cmd = captured_cmd["cmd"]
+    assert cmd[cmd.index("--mic") + 1] == "none"
+    assert cmd[cmd.index("--model-path") + 1] == "/models/base.en"
+
+
+def test_start_session_tap_mode_skips_blackhole_and_passes_tap_process(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: (_ for _ in ()).throw(AssertionError("not called")))
+    monkeypatch.setattr("notetaker.service.check_output_routing", lambda: (_ for _ in ()).throw(AssertionError("not called")))
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
+    monkeypatch.setattr("notetaker.service.check_microphone_routing", lambda: None)
+    fake_proc = MagicMock(pid=12345)
+    fake_proc.poll.return_value = None
+    captured_cmd = {}
+    monkeypatch.setattr(
+        "notetaker.service.subprocess.Popen", lambda cmd, **kwargs: captured_cmd.__setitem__("cmd", cmd) or fake_proc
+    )
+
+    info = start_session("Standup", _config(tmp_path, system_audio="tap", tap_process="com.microsoft.teams2"), tmp_path)
+
+    assert info.warnings == []
+    cmd = captured_cmd["cmd"]
+    assert cmd[cmd.index("--system-audio") + 1] == "tap"
+    assert cmd[cmd.index("--tap-process") + 1] == "com.microsoft.teams2"
+    assert "--system-device" not in cmd
+
+
+def test_start_session_tap_mode_fails_clearly_when_taps_unsupported(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: "system_audio: tap requires macOS 14.2+")
+    with pytest.raises(ServiceError, match="requires macOS 14.2"):
+        start_session("Standup", _config(tmp_path, system_audio="tap"), tmp_path)
+
+
+def test_check_setup_reports_tap_support_in_tap_mode(monkeypatch, tmp_path):
+    from notetaker.service import check_setup
+
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.NOT_INSTALLED)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
+    monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: "sk")
+
+    status = check_setup(_config(tmp_path, system_audio="tap"))
+
+    assert status.system_audio == "tap"
+    assert status.system_audio_problem is None
+    assert status.provider_ready is True
 
 
 def test_stop_session_reports_summarization_chunk_progress(monkeypatch, tmp_path):

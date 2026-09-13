@@ -338,6 +338,8 @@ def settings_update_config(
     ai_model: str = Form(""),
     whisper_model_path: str = Form(""),
     capture_microphone: str = Form(""),
+    system_audio: str = Form("tap"),
+    tap_process: str = Form(""),
 ):
     try:
         config = service.get_config(CONFIG_PATH)
@@ -350,6 +352,8 @@ def settings_update_config(
         "ai_provider": ai_provider,
         "whisper_model_path": whisper_model_path.strip() or None,
         "capture_microphone": capture_microphone == "on",
+        "system_audio": system_audio,
+        "tap_process": tap_process.strip() or None,
     }
     if ai_model.strip():
         updates["ai_model"] = ai_model.strip()

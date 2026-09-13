@@ -1,8 +1,10 @@
+import os
 import queue
 import signal
 import subprocess
 import sys
 import threading
+import time
 import wave
 from enum import Enum
 from pathlib import Path
@@ -18,6 +20,10 @@ SILENT_CHUNKS_BEFORE_WARNING = 3
 NO_MEETING_AUDIO_WARNING = (
     "[warning] no meeting audio detected — macOS sound output is probably not the "
     "Multi-Output Device that includes BlackHole. Fix it in System Settings > Sound > Output."
+)
+NO_MEETING_AUDIO_WARNING_TAP = (
+    "[warning] no meeting audio detected — make sure the meeting app is playing sound, and that notetaker "
+    "is allowed under System Settings > Privacy & Security > Screen & System Audio Recording."
 )
 
 
@@ -96,20 +102,41 @@ def check_microphone_routing() -> str | None:
 
 
 class LiveCapture:
-    """Continuously captures the meeting (BlackHole) and, optionally, your
+    """Continuously captures the meeting audio and, optionally, your
     microphone into one stereo WAV per chunk: left = Me, right = Others.
     Both streams stay open for the whole session — reopening a Bluetooth
     headset every chunk takes ~1s and drops audio.
+
+    The first source (mic when enabled, else meeting audio) is the clock:
+    a chunk is cut when it has delivered `chunk_seconds` of samples. Any
+    other source contributes what it has delivered by then and is padded
+    with silence — a process tap delivers nothing until some app has played
+    audio, and padding keeps the channels aligned instead of stalling.
+    A source that delivers nothing for `stall_seconds` is reported once via
+    `on_stall(source_name)` (e.g. a Bluetooth headset that disconnected).
     """
 
-    def __init__(self, system_device: int, mic_device: int | str | None, sample_rate: int = SAMPLE_RATE):
+    STALL_SECONDS = 5.0
+
+    def __init__(
+        self,
+        system_device: int,
+        mic_device: int | str | None,
+        sample_rate: int = SAMPLE_RATE,
+        on_stall=None,
+    ):
         self.sample_rate = sample_rate
         self.with_mic = mic_device is not None
+        self._on_stall = on_stall
+        self._stalled: set[str] = set()
         self._streams: list[sd.InputStream] = []
         self._queues: list[queue.Queue] = []
         self._leftovers: list[np.ndarray] = []
-        sources = [mic_device, system_device] if self.with_mic else [system_device]
-        for device in sources:
+        self._names: list[str] = []
+        sources = [("microphone", mic_device), ("meeting audio", system_device)] if self.with_mic else [
+            ("meeting audio", system_device)
+        ]
+        for name, device in sources:
             q: queue.Queue = queue.Queue()
 
             def _on_audio(indata, frames, time_info, status, q=q):
@@ -126,20 +153,45 @@ class LiveCapture:
             self._streams.append(stream)
             self._queues.append(q)
             self._leftovers.append(np.zeros(0, dtype=np.int16))
+            self._names.append(name)
 
     def _read(self, source: int, frames: int, timeout: float) -> np.ndarray:
+        """Up to `frames` samples from `source`, waiting at most `timeout`
+        seconds for more to arrive; the caller pads whatever is missing."""
         buffer = self._leftovers[source]
+        deadline = time.monotonic() + timeout
         while len(buffer) < frames:
-            buffer = np.concatenate([buffer, self._queues[source].get(timeout=timeout)])
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                buffer = np.concatenate([buffer, self._queues[source].get(timeout=remaining)])
+            except queue.Empty:
+                break
         self._leftovers[source] = buffer[frames:]
         return buffer[:frames]
 
+    def _note_stall(self, source: int, got: int, wanted: int) -> None:
+        name = self._names[source]
+        if got == 0 and name not in self._stalled:
+            self._stalled.add(name)
+            if self._on_stall:
+                self._on_stall(name)
+        elif got == wanted:
+            self._stalled.discard(name)
+
     def capture_chunk(self, duration_seconds: int, out_path: Path) -> None:
         frames = int(duration_seconds * self.sample_rate)
-        try:
-            columns = [self._read(i, frames, timeout=duration_seconds + 5) for i in range(len(self._queues))]
-        except queue.Empty as exc:
-            raise RuntimeError("audio device stopped delivering samples (unplugged?)") from exc
+        columns = []
+        for source in range(len(self._queues)):
+            # The clock source waits for a full chunk (plus a stall margin);
+            # the others get a short grace period and are then padded.
+            timeout = duration_seconds + self.STALL_SECONDS if source == 0 else 0.5
+            data = self._read(source, frames, timeout)
+            self._note_stall(source, len(data), frames)
+            if len(data) < frames:
+                data = np.concatenate([data, np.zeros(frames - len(data), dtype=np.int16)])
+            columns.append(data)
         data = np.column_stack(columns) if len(columns) > 1 else columns[0]
         with wave.open(str(out_path), "wb") as wf:
             wf.setnchannels(len(columns))
@@ -156,6 +208,23 @@ class LiveCapture:
                 pass
 
 
+def portaudio_device_index(name: str, timeout_seconds: float = 5.0) -> int:
+    """Index of the input device called `name` after re-enumerating —
+    PortAudio caches the device list at init, so a device created later
+    (the tap's aggregate) is invisible until re-initialized. Core Audio
+    publishes a new device asynchronously (~0.5s), so poll briefly."""
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        sd._terminate()
+        sd._initialize()
+        for index, device in enumerate(sd.query_devices()):
+            if device.get("name") == name and device.get("max_input_channels", 0) > 0:
+                return index
+        if time.monotonic() >= deadline:
+            raise RuntimeError(f"audio device '{name}' not found after creating it")
+        time.sleep(0.25)
+
+
 def _channel_peaks(wav_path: Path) -> list[int] | None:
     channels = read_wav_channels(wav_path)
     if not channels:
@@ -168,6 +237,7 @@ def run_recorder(
     transcriber: Transcriber,
     capture_fn,
     chunk_seconds: int = 10,
+    no_meeting_audio_warning: str = NO_MEETING_AUDIO_WARNING,
 ) -> None:
     """Captures audio continuously on this (main) thread while a single
     worker thread transcribes finished chunks in order. Capture must never
@@ -240,7 +310,7 @@ def run_recorder(
                 else:
                     silent_meeting_chunks = 0
                 if silent_meeting_chunks >= SILENT_CHUNKS_BEFORE_WARNING:
-                    pending.put(NO_MEETING_AUDIO_WARNING)
+                    pending.put(no_meeting_audio_warning)
                     routing_warned = True
             pending.put((chunk_path, elapsed, index))
             elapsed += chunk_seconds
@@ -250,15 +320,87 @@ def run_recorder(
         worker.join()
 
 
-if __name__ == "__main__":
-    # argv: session_dir system_device_index model_size mic_device("default"|"none") model_path("" = download)
-    _session_dir = Path(sys.argv[1])
-    _system_device = int(sys.argv[2])
-    _model_size = sys.argv[3]
-    _mic = sys.argv[4] if len(sys.argv) > 4 else "default"
-    _model_path = sys.argv[5] if len(sys.argv) > 5 and sys.argv[5] else None
-    _capture = LiveCapture(_system_device, None if _mic == "none" else _mic)
+def _parse_args(argv: list[str]):
+    import argparse
+
+    parser = argparse.ArgumentParser(prog="notetaker.recorder")
+    parser.add_argument("--session-dir", required=True)
+    parser.add_argument("--model", required=True, help="faster-whisper model size")
+    parser.add_argument("--model-path", default="", help="local model dir (offline); overrides --model")
+    parser.add_argument("--mic", default="default", help="'default' (macOS default input) or 'none'")
+    parser.add_argument("--system-audio", choices=["tap", "blackhole"], default="tap")
+    parser.add_argument("--system-device", type=int, default=None, help="BlackHole device index (blackhole mode)")
+    parser.add_argument("--tap-process", default="", help="bundle id to tap exclusively (tap mode)")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str]) -> int:
+    from notetaker.systemaudio import create_system_audio_tap
+
+    args = _parse_args(argv)
+    session_dir = Path(args.session_dir)
+    transcript_path = session_dir / "transcript.txt"
+    mic = None if args.mic == "none" else args.mic
+
+    tap = None
+    if args.system_audio == "tap":
+        tap = create_system_audio_tap(args.tap_process or None)
+        if args.tap_process and tap.fell_back_to_global:
+            append_transcript_line(
+                transcript_path,
+                f"[note] {args.tap_process} is not running — capturing all system audio instead.",
+            )
+        system_device = portaudio_device_index(tap.device_name)
+        warning = NO_MEETING_AUDIO_WARNING_TAP
+    else:
+        if args.system_device is None:
+            raise SystemExit("--system-device is required with --system-audio blackhole")
+        system_device = args.system_device
+        warning = NO_MEETING_AUDIO_WARNING
+
+    def _on_stall(source_name: str) -> None:
+        if source_name == "microphone":  # meeting audio is legitimately quiet until someone speaks
+            append_transcript_line(
+                transcript_path,
+                "[warning] microphone stopped delivering audio (headset disconnected?) — your voice is not "
+                "being recorded. Reconnect it, then stop and start the recording.",
+            )
+
+    capture = LiveCapture(system_device, mic, on_stall=_on_stall)
+    exit_code = 0
     try:
-        run_recorder(_session_dir, Transcriber(_model_size, model_path=_model_path), _capture.capture_chunk)
+        run_recorder(
+            session_dir,
+            Transcriber(args.model, model_path=args.model_path or None),
+            capture.capture_chunk,
+            no_meeting_audio_warning=warning,
+        )
+    except BaseException:
+        import traceback
+
+        traceback.print_exc()
+        exit_code = 1
     finally:
-        _capture.close()
+        if tap is not None:
+            # Destroy the tap's devices while the PortAudio streams are still
+            # running, then leave without stopping them: Pa_StopStream on the
+            # tap aggregate can deadlock inside CoreAudio (observed: the
+            # aggregate's IO thread holds the HAL mutex while parked waiting
+            # for a cycle). The transcript is complete by now — run_recorder
+            # joins its transcription worker — and a private aggregate must
+            # be destroyed explicitly or it outlives the process.
+            tap.close()
+            _hard_exit(exit_code)
+        else:
+            capture.close()
+    return exit_code
+
+
+def _hard_exit(code: int) -> None:
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(code)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

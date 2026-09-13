@@ -2,6 +2,7 @@ import os
 import signal
 
 import pytest
+from unittest.mock import MagicMock
 
 from notetaker.recorder import BlackHoleStatus, check_blackhole, run_recorder
 
@@ -239,7 +240,63 @@ def test_live_capture_writes_stereo_chunk_me_left_others_right(monkeypatch):
     capture.close()
 
 
-def test_live_capture_raises_when_device_stops_delivering(monkeypatch):
+def test_live_capture_pads_silence_when_a_source_stalls_and_reports_once(monkeypatch):
+    import numpy as np
+
+    from notetaker.recorder import LiveCapture
+
+    started = []
+
+    class FakeStream:
+        def __init__(self, device, channels, samplerate, dtype, callback):
+            self.callback = callback
+            started.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("notetaker.recorder.sd.InputStream", FakeStream)
+    stalls = []
+    capture = LiveCapture(system_device=7, mic_device="default", sample_rate=100, on_stall=stalls.append)
+    capture.STALL_SECONDS = 0.01
+    mic_stream, system_stream = started
+
+    import tempfile
+    import wave
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "chunk.wav")
+        # Mic delivers a full chunk; the tap has produced nothing yet (no app playing).
+        mic_stream.callback(np.full((100, 1), 11, dtype=np.int16), 100, None, None)
+        capture.capture_chunk(1, out)
+        with wave.open(out, "rb") as wf:
+            frames = np.frombuffer(wf.readframes(100), dtype=np.int16).reshape(-1, 2)
+        assert set(frames[:, 0]) == {11}
+        assert set(frames[:, 1]) == {0}  # padded, not stalled
+        assert stalls == ["meeting audio"]
+
+        # Second chunk: tap now half-delivers, mic stalls entirely.
+        system_stream.callback(np.full((40, 1), 22, dtype=np.int16), 40, None, None)
+        capture.capture_chunk(1, out)
+        with wave.open(out, "rb") as wf:
+            frames = np.frombuffer(wf.readframes(100), dtype=np.int16).reshape(-1, 2)
+        assert set(frames[:, 0]) == {0}
+        assert list(frames[:40, 1]) == [22] * 40 and set(frames[40:, 1]) == {0}
+        assert stalls == ["meeting audio", "microphone"]
+
+        # Third chunk: both stalled again — no repeated reports.
+        capture.capture_chunk(1, out)
+        assert stalls == ["meeting audio", "microphone"]
+    capture.close()
+
+
+def test_live_capture_single_source_pads_when_nothing_arrives(monkeypatch):
     from notetaker.recorder import LiveCapture
 
     class FakeStream:
@@ -257,7 +314,144 @@ def test_live_capture_raises_when_device_stops_delivering(monkeypatch):
 
     monkeypatch.setattr("notetaker.recorder.sd.InputStream", FakeStream)
     capture = LiveCapture(system_device=7, mic_device=None, sample_rate=100)
+    capture.STALL_SECONDS = 0.01
     assert capture.with_mic is False
-    capture._queues[0].get = lambda timeout: (_ for _ in ()).throw(__import__("queue").Empty())
-    with pytest.raises(RuntimeError, match="stopped delivering"):
-        capture.capture_chunk(1, "/dev/null")
+    import tempfile
+    import wave
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = os.path.join(tmp, "chunk.wav")
+        capture.capture_chunk(1, out)
+        with wave.open(out, "rb") as wf:
+            assert wf.getnchannels() == 1 and wf.getnframes() == 100
+
+
+def test_main_tap_mode_creates_tap_resolves_device_and_closes_everything(monkeypatch, tmp_path):
+    from notetaker import recorder
+
+    events = []
+    tap = MagicMock(device_name="notetaker-system-audio", fell_back_to_global=True)
+    tap.close.side_effect = lambda: events.append("tap.close")
+    monkeypatch.setattr("notetaker.systemaudio.create_system_audio_tap", lambda bundle: events.append(("tap", bundle)) or tap)
+    monkeypatch.setattr(recorder, "_hard_exit", lambda code: events.append(("hard_exit", code)))
+    monkeypatch.setattr(recorder, "portaudio_device_index", lambda name: events.append(("index", name)) or 4)
+
+    class FakeCapture:
+        def __init__(self, system_device, mic, on_stall=None):
+            events.append(("capture", system_device, mic))
+            self.on_stall = on_stall
+
+        def capture_chunk(self, seconds, out):
+            pass
+
+        def close(self):
+            events.append("capture.close")
+
+    captures = []
+    monkeypatch.setattr(recorder, "LiveCapture", lambda *a, **k: captures.append(FakeCapture(*a, **k)) or captures[-1])
+    monkeypatch.setattr(recorder, "Transcriber", lambda model, model_path=None: events.append(("model", model, model_path)))
+    monkeypatch.setattr(recorder, "run_recorder", lambda *a, **k: events.append(("run", k["no_meeting_audio_warning"])))
+
+    recorder.main([
+        "--session-dir", str(tmp_path), "--model", "base.en", "--mic", "default",
+        "--system-audio", "tap", "--tap-process", "com.microsoft.teams2",
+    ])
+
+    assert events == [
+        ("tap", "com.microsoft.teams2"),
+        ("index", "notetaker-system-audio"),
+        ("capture", 4, "default"),
+        ("model", "base.en", None),
+        ("run", recorder.NO_MEETING_AUDIO_WARNING_TAP),
+        "tap.close",  # destroyed before any stream stop, then hard exit (see recorder.main)
+        ("hard_exit", 0),
+    ]
+    transcript = (tmp_path / "transcript.txt").read_text()
+    assert "com.microsoft.teams2 is not running" in transcript
+    # A stalled mic is reported into the transcript; quiet meeting audio is not.
+    captures[0].on_stall("meeting audio")
+    captures[0].on_stall("microphone")
+    transcript = (tmp_path / "transcript.txt").read_text()
+    assert transcript.count("[warning]") == 1 and "microphone stopped" in transcript
+
+
+def test_main_blackhole_mode_uses_given_device_and_no_tap(monkeypatch, tmp_path):
+    from notetaker import recorder
+
+    events = []
+    monkeypatch.setattr(
+        "notetaker.systemaudio.create_system_audio_tap", lambda bundle: (_ for _ in ()).throw(AssertionError("no tap"))
+    )
+
+    class FakeCapture:
+        def __init__(self, system_device, mic, on_stall=None):
+            events.append(("capture", system_device, mic))
+
+        def capture_chunk(self, seconds, out):
+            pass
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(recorder, "LiveCapture", FakeCapture)
+    monkeypatch.setattr(recorder, "Transcriber", lambda model, model_path=None: None)
+    monkeypatch.setattr(recorder, "run_recorder", lambda *a, **k: events.append(("run", k["no_meeting_audio_warning"])))
+
+    recorder.main([
+        "--session-dir", str(tmp_path), "--model", "base.en", "--mic", "none",
+        "--system-audio", "blackhole", "--system-device", "2",
+    ])
+
+    assert events == [("capture", 2, None), ("run", recorder.NO_MEETING_AUDIO_WARNING)]
+
+
+def test_portaudio_device_index_reenumerates_and_finds_input_device(monkeypatch):
+    from notetaker import recorder
+
+    events = []
+    monkeypatch.setattr(recorder.sd, "_terminate", lambda: events.append("terminate"))
+    monkeypatch.setattr(recorder.sd, "_initialize", lambda: events.append("initialize"))
+    monkeypatch.setattr(recorder.time, "sleep", lambda s: events.append("sleep"))
+    # Core Audio publishes the device asynchronously: absent on the first
+    # enumeration, present on the second.
+    listings = iter([
+        [{"name": "Mic", "max_input_channels": 1}],
+        [{"name": "Mic", "max_input_channels": 1}, {"name": "notetaker-system-audio", "max_input_channels": 2}],
+    ])
+    monkeypatch.setattr(recorder.sd, "query_devices", lambda: next(listings))
+
+    assert recorder.portaudio_device_index("notetaker-system-audio") == 1
+    assert events == ["terminate", "initialize", "sleep", "terminate", "initialize"]
+
+    monkeypatch.setattr(recorder.sd, "query_devices", lambda: [])
+    with pytest.raises(RuntimeError, match="not found"):
+        recorder.portaudio_device_index("nope", timeout_seconds=0)
+
+
+def test_main_tap_mode_hard_exits_nonzero_when_recording_crashes(monkeypatch, tmp_path):
+    from notetaker import recorder
+
+    events = []
+    tap = MagicMock(device_name="notetaker-system-audio", fell_back_to_global=False)
+    tap.close.side_effect = lambda: events.append("tap.close")
+    monkeypatch.setattr("notetaker.systemaudio.create_system_audio_tap", lambda bundle: tap)
+    monkeypatch.setattr(recorder, "portaudio_device_index", lambda name: 4)
+    monkeypatch.setattr(recorder, "_hard_exit", lambda code: events.append(("hard_exit", code)))
+
+    class FakeCapture:
+        def __init__(self, *a, **k):
+            pass
+
+        def capture_chunk(self, seconds, out):
+            pass
+
+        def close(self):
+            events.append("capture.close")
+
+    monkeypatch.setattr(recorder, "LiveCapture", FakeCapture)
+    monkeypatch.setattr(recorder, "Transcriber", lambda model, model_path=None: None)
+    monkeypatch.setattr(recorder, "run_recorder", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
+
+    recorder.main(["--session-dir", str(tmp_path), "--model", "base.en", "--system-audio", "tap"])
+
+    assert events == ["tap.close", ("hard_exit", 1)]

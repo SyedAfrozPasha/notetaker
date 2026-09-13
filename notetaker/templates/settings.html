@@ -12,6 +12,13 @@
   <label>Whisper model <input type="text" name="whisper_model" value="{{ config.whisper_model }}" required></label>
   <label>Whisper model path (offline; leave empty to download) <input type="text" name="whisper_model_path" value="{{ config.whisper_model_path or "" }}"></label>
   <label><input type="checkbox" name="capture_microphone" {% if config.capture_microphone %}checked{% endif %}> Also record my voice (default input device)</label>
+  <label>Meeting audio source
+    <select name="system_audio">
+      <option value="tap" {% if config.system_audio == "tap" %}selected{% endif %}>System audio tap (macOS 14.2+, nothing to install)</option>
+      <option value="blackhole" {% if config.system_audio == "blackhole" %}selected{% endif %}>BlackHole + Multi-Output Device</option>
+    </select>
+  </label>
+  <label>Tap only this app (bundle id, optional) <input type="text" name="tap_process" value="{{ config.tap_process or "" }}" placeholder="com.microsoft.teams2"></label>
   <label>AI provider
     <select name="ai_provider">
       <option value="apple_local" {% if config.ai_provider == "apple_local" %}selected{% endif %}>Apple Local (apfel, on-device)</option>

@@ -37,7 +37,15 @@ def init():
     config = _load_config()
     status = service.check_setup(config)
 
-    if status.blackhole == BlackHoleStatus.NOT_INSTALLED:
+    if status.system_audio == "tap":
+        if status.system_audio_problem:
+            typer.echo(f"error: {status.system_audio_problem}", err=True)
+            raise typer.Exit(1)
+        typer.echo(
+            "System audio: Core Audio process tap (nothing to install). macOS will ask for "
+            "'System Audio Recording' permission on the first `notetaker start`."
+        )
+    elif status.blackhole == BlackHoleStatus.NOT_INSTALLED:
         typer.echo("BlackHole not found. Install it with: brew install blackhole-2ch")
     elif status.blackhole == BlackHoleStatus.INSTALLED_NOT_ACTIVE:
         typer.echo(
@@ -94,7 +102,9 @@ def start(title: str):
         raise typer.Exit(1)
     for warning in info.warnings:
         typer.echo(f"warning: {warning}", err=True)
-    typer.echo("macOS will ask for microphone access to read the BlackHole device — please allow it.")
+    typer.echo(
+        "macOS may ask for Microphone and System Audio Recording access on first run — please allow both."
+    )
     typer.echo(
         "Reminder: Teams will not show its own recording indicator for this. "
         "Let participants know you're recording."

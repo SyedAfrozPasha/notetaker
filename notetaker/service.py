@@ -40,6 +40,7 @@ from notetaker.recorder import (
     check_output_routing,
     find_blackhole_device_index,
 )
+from notetaker.systemaudio import tap_support_problem
 from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript, validate_claude_api_key
 from notetaker.transcriber import Transcriber
 
@@ -134,12 +135,24 @@ def start_session(title: str, config: Config, config_dir: Path, tags: list[str] 
         except (ValueError, KeyError, TypeError, OSError):
             pass
 
-    status = check_blackhole()
-    if status != BlackHoleStatus.ACTIVE:
-        raise ServiceError("BlackHole is not active. Run `notetaker init` for setup instructions.")
-    device_index = find_blackhole_device_index()
+    warnings: list[str] = []
+    if config.system_audio == "tap":
+        problem = tap_support_problem()
+        if problem:
+            raise ServiceError(problem)
+        system_args = ["--system-audio", "tap"]
+        if config.tap_process:
+            system_args += ["--tap-process", config.tap_process]
+    else:
+        status = check_blackhole()
+        if status != BlackHoleStatus.ACTIVE:
+            raise ServiceError("BlackHole is not active. Run `notetaker init` for setup instructions.")
+        device_index = find_blackhole_device_index()
+        system_args = ["--system-audio", "blackhole", "--system-device", str(device_index)]
+        routing_warning = check_output_routing()
+        if routing_warning:
+            warnings.append(routing_warning)
 
-    warnings = [w for w in (check_output_routing(),) if w]
     mic_arg = "none"
     if config.capture_microphone:
         mic_warning = check_microphone_routing()
@@ -160,11 +173,11 @@ def start_session(title: str, config: Config, config_dir: Path, tags: list[str] 
                 sys.executable,
                 "-m",
                 "notetaker.recorder",
-                str(session_dir),
-                str(device_index),
-                config.whisper_model,
-                mic_arg,
-                config.whisper_model_path or "",
+                "--session-dir", str(session_dir),
+                "--model", config.whisper_model,
+                "--model-path", config.whisper_model_path or "",
+                "--mic", mic_arg,
+                *system_args,
             ],
             start_new_session=True,
             stdout=log_file,
@@ -460,6 +473,8 @@ class SetupStatus:
     blackhole: BlackHoleStatus
     provider_ready: bool
     provider_problems: list[str]
+    system_audio: str = "blackhole"  # config.system_audio
+    system_audio_problem: str | None = None  # tap mode only: why taps can't be used here
 
 
 def initialize_config(config_path: Path) -> bool:
@@ -482,6 +497,9 @@ def update_config(updates: dict, config_path: Path = CONFIG_PATH) -> Config:
 
 def check_setup(config: Config) -> SetupStatus:
     blackhole = check_blackhole()
+    audio = {"system_audio": config.system_audio}
+    if config.system_audio == "tap":
+        audio["system_audio_problem"] = tap_support_problem()
     if config.ai_provider == "claude":
         try:
             keychain_credential = get_provider_credential(config.api_key_env)
@@ -495,11 +513,12 @@ def check_setup(config: Config) -> SetupStatus:
                     f"No credential found for {config.api_key_env}. Run `notetaker set-api-key <key>`, "
                     "or export it as an environment variable, then re-run `notetaker init`."
                 ],
+                **audio,
             )
-        return SetupStatus(blackhole=blackhole, provider_ready=True, provider_problems=[])
+        return SetupStatus(blackhole=blackhole, provider_ready=True, provider_problems=[], **audio)
     if config.ai_provider == "apple_local":
         problems = check_apple_local_preflight()
-        return SetupStatus(blackhole=blackhole, provider_ready=not problems, provider_problems=problems)
+        return SetupStatus(blackhole=blackhole, provider_ready=not problems, provider_problems=problems, **audio)
     raise ServiceError(f"Unknown ai_provider '{config.ai_provider}'.")
 
 

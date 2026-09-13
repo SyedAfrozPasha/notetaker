@@ -12,6 +12,9 @@ whisper_model: base.en          # tiny.en/base.en/small.en/medium.en
 # whisper_model_path: /path/to/faster-whisper-model   # offline machines: load the model from this
 #                                                      # directory instead of downloading from Hugging Face
 capture_microphone: true        # also record your own voice from the default input device
+system_audio: tap               # tap = Core Audio process tap (macOS 14.2+, nothing to install)
+                                # blackhole = BlackHole loopback device + Multi-Output Device
+# tap_process: com.microsoft.teams2   # tap only this app's audio (falls back to all audio if not running)
 ai_provider: apple_local        # apple_local (fully on-device via apfel) or claude (cloud)
 ai_model: apple-foundationmodel
 api_key_env: ANTHROPIC_API_KEY  # only used by ai_provider: claude; never stored in this file
@@ -19,8 +22,12 @@ api_key_env: ANTHROPIC_API_KEY  # only used by ai_provider: claude; never stored
 
 REQUIRED_KEYS = ["notes_dir", "whisper_model", "ai_provider", "ai_model", "api_key_env"]
 VALID_PROVIDERS = ("claude", "apple_local")
+VALID_SYSTEM_AUDIO = ("tap", "blackhole")
 PROVIDER_DEFAULT_MODELS = {"claude": "claude-sonnet-5", "apple_local": "apple-foundationmodel"}
-UPDATABLE_KEYS = {"notes_dir", "whisper_model", "ai_provider", "ai_model", "capture_microphone", "whisper_model_path"}
+UPDATABLE_KEYS = {
+    "notes_dir", "whisper_model", "ai_provider", "ai_model", "capture_microphone", "whisper_model_path",
+    "system_audio", "tap_process",
+}
 
 
 class ConfigError(Exception):
@@ -36,6 +43,8 @@ class Config:
     api_key_env: str
     whisper_model_path: str | None = None
     capture_microphone: bool = True
+    system_audio: str = "tap"
+    tap_process: str | None = None
 
 
 def write_default_config(path: Path = CONFIG_PATH) -> bool:
@@ -70,6 +79,9 @@ def _parse_config(raw: dict, path: Path) -> Config:
         raise ConfigError(
             f"Unknown ai_provider '{raw['ai_provider']}' — expected one of {VALID_PROVIDERS}."
         )
+    system_audio = raw.get("system_audio", "tap")
+    if system_audio not in VALID_SYSTEM_AUDIO:
+        raise ConfigError(f"Unknown system_audio '{system_audio}' — expected one of {VALID_SYSTEM_AUDIO}.")
     try:
         return Config(
             notes_dir=Path(raw["notes_dir"]).expanduser(),
@@ -79,6 +91,8 @@ def _parse_config(raw: dict, path: Path) -> Config:
             api_key_env=raw["api_key_env"],
             whisper_model_path=raw.get("whisper_model_path") or None,
             capture_microphone=_as_bool(raw.get("capture_microphone", True), "capture_microphone"),
+            system_audio=system_audio,
+            tap_process=(raw.get("tap_process") or None),
         )
     except TypeError as exc:
         raise ConfigError(f"Config at {path} has an invalid value: {exc}") from exc
@@ -112,8 +126,9 @@ def update_config(updates: dict, path: Path = CONFIG_PATH) -> Config:
         # name is meaningless to the new one, so fall back to its default.
         updates = {**updates, "ai_model": PROVIDER_DEFAULT_MODELS.get(new_provider, raw.get("ai_model"))}
     raw.update(updates)
-    if raw.get("whisper_model_path") in ("", None):
-        raw.pop("whisper_model_path", None)
+    for optional_key in ("whisper_model_path", "tap_process"):
+        if raw.get(optional_key) in ("", None):
+            raw.pop(optional_key, None)
     config = _parse_config(raw, path)
     path.write_text(yaml.safe_dump(raw, sort_keys=False))
     return config

@@ -993,6 +993,8 @@ def test_settings_update_config_saves_and_redirects(client, monkeypatch, tmp_pat
             "ai_model": "apple-foundationmodel",
             "whisper_model_path": "/models/small.en",
             "capture_microphone": "on",
+            "system_audio": "tap",
+            "tap_process": "com.microsoft.teams2",
         },
         follow_redirects=False,
     )
@@ -1006,6 +1008,8 @@ def test_settings_update_config_saves_and_redirects(client, monkeypatch, tmp_pat
         "ai_model": "apple-foundationmodel",
         "whisper_model_path": "/models/small.en",
         "capture_microphone": True,
+        "system_audio": "tap",
+        "tap_process": "com.microsoft.teams2",
     }
 
 

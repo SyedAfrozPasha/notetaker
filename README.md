@@ -5,38 +5,42 @@ Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally 
 
 ## Setup
 
-1. Install [BlackHole](https://github.com/ExistentialAudio/BlackHole) (a virtual audio
-   loopback device) via Homebrew:
+1. **Nothing to install for meeting audio.** On macOS 14.2+ notetaker captures system audio
+   through a Core Audio *process tap* — no driver, no admin password, no reboot, and it
+   works the same whether you listen on speakers, wired or Bluetooth headphones. macOS asks
+   once for **System Audio Recording** permission on the first `notetaker start`
+   (System Settings → Privacy & Security → Screen & System Audio Recording).
 
-   ```bash
-   brew install blackhole-2ch
-   ```
+   Optional: set `tap_process: com.microsoft.teams2` in `~/.notetaker/config.yaml` to
+   capture only Teams (no Slack pings or music in the transcript). If Teams isn't running
+   when you start, notetaker falls back to all system audio and says so in the transcript.
 
-   **Reboot your Mac after installing** — BlackHole's driver only becomes active after a
-   restart. `notetaker init` will tell you if it's installed but not yet active.
-
-2. Set up a Multi-Output Device so you can still hear the meeting while it's being
-   captured: open **Audio MIDI Setup** (Applications → Utilities), click **+** → **Create
-   Multi-Output Device**, check both your normal output (e.g. MacBook speakers) and
-   **BlackHole 2ch**, then select that Multi-Output Device as your Mac's sound output
-   during meetings. This step is manual and not automated by this project.
-
-   **If you use headphones**, make a second Multi-Output Device containing your
-   headphones + BlackHole 2ch (Bluetooth headphones must be connected to show up in the
-   list). macOS switches the sound output straight to headphones every time you connect
-   them, which bypasses BlackHole and gives an empty transcript — so re-select the
-   headphones Multi-Output Device in **System Settings → Sound → Output** after
-   connecting. `notetaker start` warns if the current output is not a Multi-Output
-   Device, and the live transcript shows a warning if meeting audio stays silent while
-   your mic is active. Volume keys don't work while a Multi-Output Device is selected;
-   adjust volume in Audio MIDI Setup or on the headphones themselves.
-
-   **Your own voice** is recorded from the macOS default input device (built-in mic, or
+2. **Your own voice** is recorded from the macOS default input device (built-in mic, or
    your headset mic when connected — macOS picks it automatically). Nothing to configure;
    set `capture_microphone: false` in the config to turn it off. Transcript lines are
    labelled `Me:` / `Others:` so the minutes can assign action items to the right person.
    Without headphones your mic also hears the speakers, so the meeting may appear twice
    in the transcript (once under each label) — headphones avoid this.
+
+   <details>
+   <summary><b>Fallback: BlackHole loopback (older macOS, or if the tap is blocked by IT)</b></summary>
+
+   Set `system_audio: blackhole` in `~/.notetaker/config.yaml`, then:
+
+   - Install [BlackHole](https://github.com/ExistentialAudio/BlackHole) via Homebrew
+     (`brew install blackhole-2ch` — a cask that runs a `.pkg` installer, so it needs an
+     administrator password) and **reboot**; `notetaker init` tells you if it's installed
+     but not yet active.
+   - Create a Multi-Output Device in **Audio MIDI Setup** (Applications → Utilities: **+** →
+     **Create Multi-Output Device**, tick your speakers + **BlackHole 2ch**) and select it in
+     **System Settings → Sound → Output** during meetings. If you use headphones, make a
+     second Multi-Output Device with headphones + BlackHole (Bluetooth headphones must be
+     connected to appear) and re-select it every time you connect them — macOS switches
+     output straight to headphones, which bypasses BlackHole and gives an empty transcript.
+     `notetaker start` warns when the output is not a Multi-Output Device, and the live
+     transcript warns if meeting audio stays silent while your mic is active. Volume keys
+     don't work while a Multi-Output Device is selected.
+   </details>
 
 3. Clone this repo and run the installer:
 
@@ -120,16 +124,18 @@ it's happening and will not show its own "this meeting is being recorded" indica
 other participants. `notetaker start` prints a reminder each time, but it's on you to let
 participants know per your organization's policy and local law.
 
-**First run note:** macOS will prompt for microphone access (used for both BlackHole and your
-mic) when you first run `notetaker start` — please allow it for recording to work. If you start
-recordings from the menu bar app or dashboard (run by `brew services`), the prompt is attributed
-to the Python in `.venv`; if no prompt appears and the transcript stays empty, grant it under
-System Settings → Privacy & Security → Microphone.
+**First run note:** macOS prompts for **Microphone** access (your voice) and **System Audio
+Recording** (the meeting, in tap mode) when you first run `notetaker start` — allow both. If you
+start recordings from the menu bar app or dashboard (run by `brew services`), the prompts are
+attributed to the Python in `.venv`; if none appears and the transcript stays empty, grant both
+under System Settings → Privacy & Security (Microphone, and Screen & System Audio Recording), or
+run one `notetaker start`/`stop` from Terminal first.
 
 ## Locked-down / corporate Macs (Homebrew only, no other downloads)
 
-- **BlackHole** installs via `brew install blackhole-2ch`, but it is a cask that runs a
-  `.pkg` installer and needs an administrator password.
+- **Meeting audio needs no install** in the default tap mode. If an MDM profile denies
+  "System Audio Recording", the fallback is BlackHole (`brew install blackhole-2ch`, a cask
+  that runs a `.pkg` installer and needs an administrator password).
 - **The Whisper model** is normally downloaded from huggingface.co on `notetaker init`.
   If that host is blocked, copy a faster-whisper model directory from another machine
   (e.g. `~/.cache/huggingface/hub/models--Systran--faster-whisper-base.en/snapshots/<id>/`,
