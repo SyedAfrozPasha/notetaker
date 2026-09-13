@@ -1,42 +1,66 @@
 {% extends "base.html" %}
+{% block title %}Settings · Notetaker{% endblock %}
 {% block content %}
 {% if setup_error %}
-<p class="error">Notetaker is not set up: {{ setup_error }}</p>
+<div class="banner error">Notetaker is not set up: {{ setup_error }}</div>
 {% else %}
-<h2>Settings</h2>
+<div class="page-head"><h2>Settings</h2></div>
 
-<h3>Configuration</h3>
-{% if config_error %}<p class="error">{{ config_error }}</p>{% endif %}
-<form method="post" action="/settings/config">
-  <label>Notes directory <input type="text" name="notes_dir" value="{{ config.notes_dir }}" required></label>
-  <label>Whisper model <input type="text" name="whisper_model" value="{{ config.whisper_model }}" required></label>
-  <label>Whisper model path (offline; leave empty to download) <input type="text" name="whisper_model_path" value="{{ config.whisper_model_path or "" }}"></label>
-  <label><input type="checkbox" name="capture_microphone" {% if config.capture_microphone %}checked{% endif %}> Also record my voice (default input device)</label>
-  <label>Meeting audio source
-    <select name="system_audio">
-      <option value="tap" {% if config.system_audio == "tap" %}selected{% endif %}>System audio tap (macOS 14.2+, nothing to install)</option>
-      <option value="blackhole" {% if config.system_audio == "blackhole" %}selected{% endif %}>BlackHole + Multi-Output Device</option>
-    </select>
-  </label>
-  <label>Tap only this app (bundle id, optional) <input type="text" name="tap_process" value="{{ config.tap_process or "" }}" placeholder="com.microsoft.teams2"></label>
-  <label>AI provider
-    <select name="ai_provider">
-      <option value="apple_local" {% if config.ai_provider == "apple_local" %}selected{% endif %}>Apple Local (apfel, on-device)</option>
-      <option value="claude" {% if config.ai_provider == "claude" %}selected{% endif %}>Claude (cloud)</option>
-    </select>
-  </label>
-  <label>AI model <input type="text" name="ai_model" value="{{ config.ai_model }}" placeholder="apple-foundationmodel / claude-sonnet-5"></label>
-  <button type="submit">Save Configuration</button>
-</form>
+{% if config_error %}<div class="banner error">{{ config_error }}</div>{% endif %}
+<div class="card">
+  <form method="post" action="/settings/config">
+    <fieldset>
+      <legend>Storage</legend>
+      <label>Notes directory <input type="text" name="notes_dir" value="{{ config.notes_dir }}" required></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Transcription</legend>
+      <div class="grid">
+        <label>Whisper model <input type="text" name="whisper_model" value="{{ config.whisper_model }}" required><span class="hint">tiny / base.en / small / medium</span></label>
+        <label>Local model path <input type="text" name="whisper_model_path" value="{{ config.whisper_model_path or "" }}" placeholder="leave empty to download"><span class="hint">Offline CTranslate2 model directory.</span></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Audio</legend>
+      <label>Meeting audio source
+        <select name="system_audio">
+          <option value="tap" {% if config.system_audio == "tap" %}selected{% endif %}>System audio tap (macOS 14.2+, nothing to install)</option>
+          <option value="blackhole" {% if config.system_audio == "blackhole" %}selected{% endif %}>BlackHole + Multi-Output Device</option>
+        </select>
+      </label>
+      <label>Tap only this app <input type="text" name="tap_process" value="{{ config.tap_process or "" }}" placeholder="com.microsoft.teams2"><span class="hint">Bundle id. Optional; falls back to all system audio when empty or not running.</span></label>
+      <label class="check"><input type="checkbox" name="capture_microphone" {% if config.capture_microphone %}checked{% endif %}> Also record my voice (default input device)</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Summaries</legend>
+      <div class="grid">
+        <label>AI provider
+          <select name="ai_provider">
+            <option value="apple_local" {% if config.ai_provider == "apple_local" %}selected{% endif %}>Apple Local (apfel, on-device)</option>
+            <option value="claude" {% if config.ai_provider == "claude" %}selected{% endif %}>Claude (cloud)</option>
+          </select>
+        </label>
+        <label>Model <input type="text" name="ai_model" value="{{ config.ai_model }}" placeholder="apple-foundationmodel / claude-sonnet-5"><span class="hint">Resets to the provider default when you switch provider.</span></label>
+      </div>
+    </fieldset>
+
+    <div class="actions"><button type="submit" class="btn primary">Save configuration</button></div>
+  </form>
+</div>
 
 {% if config.ai_provider == "claude" %}
-<h3>Claude API Key</h3>
-{% if credential_error %}<p class="error">{{ credential_error }}</p>{% endif %}
-<p>Current key: {{ masked_credential or "Not set" }}</p>
-<form method="post" action="/settings/credential">
-  <label>New API Key <input type="password" name="api_key" required></label>
-  <button type="submit">Save API Key</button>
-</form>
+<div class="card">
+  <h3>Claude API key</h3>
+  {% if credential_error %}<div class="banner error">{{ credential_error }}</div>{% endif %}
+  <p class="meta">Current key: <span class="cred">{{ masked_credential or "Not set" }}</span> · stored in the macOS Keychain, never on disk.</p>
+  <form method="post" action="/settings/credential">
+    <label>New API key <input type="password" name="api_key" required autocomplete="off"></label>
+    <div class="actions"><button type="submit" class="btn primary">Save API key</button></div>
+  </form>
+</div>
 {% endif %}
 {% endif %}
 {% endblock %}

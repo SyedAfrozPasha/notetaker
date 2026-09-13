@@ -1,29 +1,41 @@
 {% extends "base.html" %}
+{% block title %}Notes · Notetaker{% endblock %}
 {% block content %}
 {% if setup_error %}
-<p class="error">Notetaker is not set up: {{ setup_error }}</p>
+<div class="banner error">Notetaker is not set up: {{ setup_error }}</div>
 {% else %}
-<form method="get" action="/notes">
-  <label>Search <input type="text" name="query" value="{{ query or '' }}"></label>
-  <label>Tag <input type="text" name="tag" value="{{ tag or '' }}"></label>
-  <label>From <input type="date" name="start_date" value="{{ start_date or '' }}"></label>
-  <label>To <input type="date" name="end_date" value="{{ end_date or '' }}"></label>
-  <button type="submit">Search</button>
-</form>
+<div class="page-head">
+  <h2>Notes</h2>
+  {% if notes %}<span class="sub">{{ notes | length }} note{{ '' if notes | length == 1 else 's' }}</span>{% endif %}
+</div>
+
+<div class="card">
+  <form method="get" action="/notes" class="filters">
+    <label>Search <input type="text" name="query" value="{{ query or '' }}" placeholder="Title or content"></label>
+    <label>Tag <input type="text" name="tag" value="{{ tag or '' }}"></label>
+    <label>From <input type="date" name="start_date" value="{{ start_date or '' }}"></label>
+    <label>To <input type="date" name="end_date" value="{{ end_date or '' }}"></label>
+    <button type="submit" class="btn">Filter</button>
+  </form>
+</div>
+
 {% if error %}
-<p class="error">{{ error }}</p>
+<div class="banner error">{{ error }}</div>
 {% elif notes %}
-<ul>
-  {% for note in notes %}
-  <li>
-    <a href="/notes/{{ note.note_id }}">{{ note.title }}</a>
-    — {{ note.date.strftime('%Y-%m-%d') }}
-    {% if note.tags %}[{{ note.tags | join(', ') }}]{% endif %}
-  </li>
-  {% endfor %}
-</ul>
+<div class="card flush">
+  <ul class="note-list">
+    {% for note in notes %}
+    <li class="note-item">
+      <span class="date">{{ note.date.strftime('%Y-%m-%d') }}</span>
+      <a class="title" href="/notes/{{ note.note_id }}">{{ note.title }}</a>
+      {% if note.tags %}<span class="tags">{% for t in note.tags %}<span class="tag">{{ t }}</span>{% endfor %}</span>{% endif %}
+      <span class="duration">{{ note.duration_minutes }} min</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
 {% else %}
-<p>No notes found.</p>
+<div class="card"><div class="empty-state">No notes found.</div></div>
 {% endif %}
 {% endif %}
 {% endblock %}

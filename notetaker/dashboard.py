@@ -1,17 +1,32 @@
+import re
+import socket
+import threading
+import time
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+import uvicorn
 from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from notetaker import service
 from notetaker.config import CONFIG_DIR, CONFIG_PATH, Config
 
+_PACKAGE_DIR = Path(__file__).parent
+
+DASHBOARD_HOST = "127.0.0.1"
+DASHBOARD_PORT = 8420
+
 app = FastAPI()
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
-templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+# htmx is vendored (not loaded from a CDN) so the dashboard works on a machine
+# with no internet access — the same machines `whisper_model_path` exists for.
+app.mount("/static", StaticFiles(directory=str(_PACKAGE_DIR / "static")), name="static")
+templates = Jinja2Templates(directory=str(_PACKAGE_DIR / "templates"))
 
 
 @app.middleware("http")
@@ -32,6 +47,52 @@ async def _reject_cross_site_posts(request: Request, call_next):
     return await call_next(request)
 
 
+def port_in_use_error(host: str, port: int) -> str | None:
+    """A user-facing message if nothing can listen on host:port right now,
+    else None. `notetaker dashboard` checks this *before* putting the menu
+    bar item up, so a taken port fails the command outright instead of
+    leaving a menu bar icon with a dead "Open Dashboard" behind it."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+        except OSError as exc:
+            reason = exc.strerror or str(exc)
+            return (
+                f"cannot bind the dashboard to http://{host}:{port} ({reason}). "
+                "Is another notetaker dashboard already running?"
+            )
+    return None
+
+
+@dataclass
+class BackgroundDashboard:
+    """The dashboard's uvicorn server running on a daemon thread of the
+    current process — so `notetaker dashboard` can hand the main thread to
+    the rumps menu bar app (Cocoa insists on the main thread), and the two
+    UI surfaces share one process, one `brew services` entry, and one
+    lifetime."""
+
+    url: str
+    server: uvicorn.Server
+    thread: threading.Thread
+
+    def stop(self, timeout: float = 5.0) -> None:
+        self.server.should_exit = True
+        self.thread.join(timeout)
+
+
+def serve_in_background(host: str, port: int) -> BackgroundDashboard:
+    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
+    # uvicorn only installs its SIGINT/SIGTERM handlers on the main thread, so
+    # on this thread the process's default handlers stay in charge — which is
+    # what we want: `brew services stop` sends SIGTERM and the whole process
+    # (menu bar included) exits.
+    thread = threading.Thread(target=server.run, name="notetaker-dashboard", daemon=True)
+    thread.start()
+    return BackgroundDashboard(url=f"http://{host}:{port}", server=server, thread=thread)
+
+
 def _format_elapsed(start_time: datetime, now: datetime) -> str:
     """Formats elapsed time as MM:SS, or H:MM:SS past an hour."""
     total_seconds = int((now - start_time).total_seconds())
@@ -42,15 +103,92 @@ def _format_elapsed(start_time: datetime, now: datetime) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
+@dataclass
+class TranscriptRow:
+    """One rendered line of a Transcript. `speaker` is "me", "others",
+    "status" (a Recorder `[warning]`/`[note]`/`[transcription failed …]`
+    line) or "" (a mono-chunk line, or anything unrecognised)."""
+
+    time: str
+    speaker: str
+    text: str
+
+
+_SPEAKER_LINE_RE = re.compile(r"^\[(\d{2}:\d{2}:\d{2})\]\s*(?:(Me|Others):\s*)?(.*)$")
+_STATUS_LINE_RE = re.compile(r"^\[(warning|note|transcription failed[^\]]*|recording stopped[^\]]*)\]\s*(.*)$")
+
+
+def parse_transcript_rows(text: str) -> list[TranscriptRow]:
+    """Splits the Transcriber's `[hh:mm:ss] Me: …` / `[hh:mm:ss] Others: …` /
+    `[hh:mm:ss] …` lines (and the Recorder's status lines) into rows the
+    templates can style per speaker. Blank lines are dropped."""
+    rows = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        status = _STATUS_LINE_RE.match(line)
+        if status:
+            kind, rest = status.groups()
+            if kind in ("warning", "note"):
+                text = rest or kind
+            else:  # the whole message lives inside the brackets
+                text = f"{kind}: {rest}" if rest else kind
+            rows.append(TranscriptRow("", "status", text))
+            continue
+        spoken = _SPEAKER_LINE_RE.match(line)
+        if spoken:
+            stamp, speaker, rest = spoken.groups()
+            rows.append(TranscriptRow(stamp, (speaker or "").lower(), rest))
+            continue
+        rows.append(TranscriptRow("", "", line))
+    return rows
+
+
+def count_segments(rows: list[TranscriptRow]) -> int:
+    return sum(1 for row in rows if row.speaker != "status")
+
+
+def seconds_since_transcript_update(transcript_path: Path, now: float | None = None) -> int | None:
+    """Whole seconds since the Transcriber last appended to the file, or
+    None when no Chunk has been transcribed yet (the file doesn't exist)."""
+    try:
+        mtime = transcript_path.stat().st_mtime
+    except FileNotFoundError:
+        return None
+    return max(0, int((now if now is not None else time.time()) - mtime))
+
+
+# Audio-routing warnings from `start_session` are not persisted anywhere
+# (see SessionInfo.warnings), so /start remembers them here, keyed by the
+# session directory, and every /status poll re-renders them until that
+# session ends. In-memory on purpose: a dashboard restart mid-meeting drops
+# them, which is rare and harmless.
+_start_warnings: dict[Path, list[str]] = {}
+
+
 def _status_context(config: Config) -> dict:
     info = service.get_current_session_status(CONFIG_DIR)
     if info is None:
+        _start_warnings.clear()
         return {"recording": False}
-    return {
+    for session_dir in list(_start_warnings):
+        if session_dir != info.session_dir:
+            del _start_warnings[session_dir]
+    rows = parse_transcript_rows(service.get_live_transcript_preview(info))
+    context = {
         "recording": True,
+        "title": info.title,
+        "tags": list(info.tags or []),
         "elapsed": _format_elapsed(info.start_time, datetime.now()),
-        "transcript": service.get_live_transcript_preview(info),
+        "rows": rows,
+        "segment_count": count_segments(rows),
+        "seconds_since_update": seconds_since_transcript_update(info.session_dir / "transcript.txt"),
     }
+    pinned = _start_warnings.get(info.session_dir)
+    if pinned:
+        context["warning"] = " ".join(pinned)
+    return context
 
 
 def _parse_date(value: str | None) -> date | None:
@@ -108,6 +246,7 @@ def start(request: Request, title: str = Form(...), tags: str = Form("")):
         )
     warnings = list(getattr(info, "warnings", None) or [])
     if warnings:
+        _start_warnings[info.session_dir] = warnings  # re-shown by every /status poll while this session lives
         context["warning"] = " ".join(warnings)
 
     return templates.TemplateResponse(request, "_status.html", {**_status_context(config), **context})
@@ -222,7 +361,11 @@ def notes_detail(request: Request, note_id: str):
     except Exception as exc:
         return templates.TemplateResponse(request, "note_detail.html", {"not_found": str(exc)})
 
-    return templates.TemplateResponse(request, "note_detail.html", {"detail": detail, "full_markdown": full_markdown})
+    return templates.TemplateResponse(
+        request,
+        "note_detail.html",
+        {"detail": detail, "full_markdown": full_markdown, "rows": parse_transcript_rows(detail.transcript)},
+    )
 
 
 @app.get("/notes/{note_id}/edit", response_class=HTMLResponse)
@@ -310,7 +453,14 @@ def notes_resummarize(request: Request, note_id: str):
         except Exception:
             return templates.TemplateResponse(request, "note_detail.html", {"not_found": str(exc)})
         return templates.TemplateResponse(
-            request, "note_detail.html", {"detail": detail, "error": str(exc), "full_markdown": full_markdown}
+            request,
+            "note_detail.html",
+            {
+                "detail": detail,
+                "error": str(exc),
+                "full_markdown": full_markdown,
+                "rows": parse_transcript_rows(detail.transcript),
+            },
         )
 
     return RedirectResponse(f"/notes/{note_id}", status_code=303)

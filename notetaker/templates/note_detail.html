@@ -1,48 +1,72 @@
 {% extends "base.html" %}
+{% from "_transcript.html" import transcript_rows %}
+{% block title %}{{ detail.title if detail else "Note" }} · Notetaker{% endblock %}
 {% block content %}
 {% if setup_error %}
-<p class="error">Notetaker is not set up: {{ setup_error }}</p>
+<div class="banner error">Notetaker is not set up: {{ setup_error }}</div>
 {% elif not_found %}
-<p class="error">{{ not_found }}</p>
+<div class="banner error">{{ not_found }}</div>
+<p><a href="/notes">&larr; Back to notes</a></p>
 {% else %}
-<h2>{{ detail.title }}</h2>
-<p>{{ detail.date.strftime('%Y-%m-%d %H:%M') }} — {{ detail.duration_minutes }} min{% if detail.tags %} — [{{ detail.tags | join(', ') }}]{% endif %}</p>
-{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<a class="back" href="/notes">&larr; All notes</a>
+<div class="page-head">
+  <div>
+    <h2>{{ detail.title }}</h2>
+    <div class="kv">
+      <span>{{ detail.date.strftime('%a %d %b %Y, %H:%M') }}</span>
+      <span class="sep">·</span>
+      <span>{{ detail.duration_minutes }} min</span>
+      {% if detail.tags %}<span class="sep">·</span><span class="tags">{% for t in detail.tags %}<span class="tag">{{ t }}</span>{% endfor %}</span>{% endif %}
+    </div>
+  </div>
+  <div class="actions" style="margin:0">
+    <a class="btn sm" href="/notes/{{ detail.note_id }}/edit">Edit</a>
+    <form method="post" action="/notes/{{ detail.note_id }}/resummarize">
+      <button type="submit" class="btn sm">Resummarize</button>
+    </form>
+    <form
+      hx-post="/notes/{{ detail.note_id }}/delete"
+      hx-confirm="Delete this note permanently? This cannot be undone."
+      hx-target="body"
+      hx-swap="outerHTML"
+    >
+      <button type="submit" class="btn sm danger">Delete</button>
+    </form>
+  </div>
+</div>
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
 
-<h3>Summary</h3>
-<p id="summary-text">{{ detail.summary_text }}</p>
-<button onclick="navigator.clipboard.writeText(document.getElementById('summary-text').innerText)">Copy Summary</button>
+<div class="card">
+  <div class="section">
+    <div class="section-head">
+      <h3>Summary</h3>
+      <button type="button" class="btn sm" onclick="navigator.clipboard.writeText(document.getElementById('summary-text').innerText)">Copy</button>
+    </div>
+    <div id="summary-text" class="prose">{{ detail.summary_text }}</div>
+  </div>
 
-<h3>Action Items</h3>
-<ul>
-  {% for item in detail.action_items %}
-  <li><input type="checkbox" disabled> {{ item }}</li>
-  {% else %}
-  <li>(none)</li>
-  {% endfor %}
-</ul>
+  <div class="section">
+    <h3>Action items</h3>
+    <ul class="checklist">
+      {% for item in detail.action_items %}
+      <li><input type="checkbox" disabled> <span>{{ item }}</span></li>
+      {% else %}
+      <li class="muted">(none)</li>
+      {% endfor %}
+    </ul>
+  </div>
 
-<h3>Transcript</h3>
-<textarea readonly>{{ detail.transcript }}</textarea>
-
-<textarea id="full-markdown" readonly hidden>{{ full_markdown }}</textarea>
-<div>
-  <a href="/notes/{{ detail.note_id }}/edit">Edit</a>
-  <button onclick="navigator.clipboard.writeText(document.getElementById('full-markdown').value)">Copy Full Note as Markdown</button>
-  <form style="display:inline" method="post" action="/notes/{{ detail.note_id }}/resummarize">
-    <button type="submit">Resummarize</button>
-  </form>
-  <form
-    style="display:inline"
-    hx-post="/notes/{{ detail.note_id }}/delete"
-    hx-confirm="Delete this note permanently? This cannot be undone."
-    hx-target="body"
-    hx-swap="outerHTML"
-  >
-    <button type="submit">Delete</button>
-  </form>
+  <div class="section">
+    <div class="section-head">
+      <h3>Transcript</h3>
+      <button type="button" class="btn sm" onclick="navigator.clipboard.writeText(document.getElementById('full-markdown').value)">Copy full note as Markdown</button>
+    </div>
+    <div class="transcript tall">
+      {{ transcript_rows(rows, "No transcript.") }}
+    </div>
+  </div>
 </div>
 
-<p><a href="/notes">&larr; Back to Notes</a></p>
+<textarea id="full-markdown" readonly hidden>{{ full_markdown }}</textarea>
 {% endif %}
 {% endblock %}

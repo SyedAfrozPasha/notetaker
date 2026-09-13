@@ -36,7 +36,7 @@ build-backend = "setuptools.build_meta"
 packages = ["notetaker"]
 
 [tool.setuptools.package-data]
-notetaker = ["templates/*.html"]
+notetaker = ["templates/*.html", "static/*"]
 
 [tool.pytest.ini_options]
 markers = ["integration: slower tests that touch a real external system (a downloaded model, brew, etc.)"]

@@ -26,10 +26,15 @@ def test_index_page_loads_and_wires_the_status_poller(client):
     assert 'hx-trigger="load, every 2s"' in response.text
 
 
-def test_index_page_loads_htmx_from_cdn(client):
+def test_index_page_loads_vendored_htmx_not_a_cdn(client):
     response = client.get("/")
 
-    assert "htmx.org@2.0.10" in response.text
+    assert '<script src="/static/htmx.min.js"></script>' in response.text
+    assert "cdn.jsdelivr.net" not in response.text
+
+    served = client.get("/static/htmx.min.js")
+    assert served.status_code == 200
+    assert "var htmx=" in served.text
 
 
 def _config(tmp_path):
@@ -74,7 +79,8 @@ def test_status_shows_recording_state_with_elapsed_and_transcript(client, monkey
 
     assert response.status_code == 200
     assert "Recording" in response.text
-    assert "[00:00:03] hello" in response.text
+    assert '<span class="time">00:00:03</span>' in response.text
+    assert '<span class="text">hello</span>' in response.text
     assert 'hx-post="/stop"' in response.text
     assert 'hx-post="/cancel"' in response.text
 
@@ -603,7 +609,8 @@ def test_notes_detail_shows_structured_fields(client, monkeypatch, tmp_path):
     assert "Standup" in response.text
     assert "We discussed X." in response.text
     assert "Follow up with Bob" in response.text
-    assert "[00:00:03] hello" in response.text
+    assert '<span class="time">00:00:03</span>' in response.text
+    assert '<span class="text">hello</span>' in response.text
     assert "project-x" in response.text
 
 
