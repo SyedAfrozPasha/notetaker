@@ -101,17 +101,28 @@ def test_generated_formula_is_accepted_by_real_brew(tmp_path):
     subprocess.run(["git", "add", "-A"], cwd=fake_repo, check=True, env=git_env)
     subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=fake_repo, check=True, env=git_env)
 
-    tap_name = f"notetaker-test-{uuid.uuid4().hex[:8]}"
+    # Deliberately NOT named "notetaker-dashboard": a real machine may
+    # already have that formula installed for real (per the README), and
+    # Homebrew refuses to install a same-named formula from a different
+    # tap even into an unrelated throwaway tap — this would collide with
+    # a genuine install and fail the test on an otherwise-healthy machine.
+    suffix = uuid.uuid4().hex[:8]
+    tap_name = f"notetaker-test-{suffix}"
     full_tap = f"local/{tap_name}"
-    formula_ref = f"{full_tap}/notetaker-dashboard"
+    formula_slug = f"notetaker-formula-check-{suffix}"
+    formula_class = f"NotetakerFormulaCheck{suffix.capitalize()}"
+    formula_ref = f"{full_tap}/{formula_slug}"
 
     try:
         subprocess.run(["brew", "tap-new", full_tap, "--no-git"], check=True)
         tap_dir = subprocess.run(
             ["brew", "--repository", full_tap], check=True, capture_output=True, text=True
         ).stdout.strip()
-        formula_path = Path(tap_dir) / "Formula" / "notetaker-dashboard.rb"
-        formula_path.write_text(generate_formula("dashboard", fake_repo, "0.0.0-test"))
+        formula_path = Path(tap_dir) / "Formula" / f"{formula_slug}.rb"
+        formula_text = generate_formula("dashboard", fake_repo, "0.0.0-test").replace(
+            "class NotetakerDashboard < Formula", f"class {formula_class} < Formula", 1
+        )
+        formula_path.write_text(formula_text)
 
         subprocess.run(["brew", "install", formula_ref], check=True)
 

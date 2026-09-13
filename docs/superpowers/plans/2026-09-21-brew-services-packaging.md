@@ -319,7 +319,15 @@ builds anything; they just point `brew services` at the `.venv/bin/notetaker` th
 already set up. See `docs/adr/0003-brew-services-for-ui-processes-no-app-packaging.md` for why.
 
 ```bash
-brew tap syedafrozpasha/notetaker "$(pwd)"
+# One-time: create a local (unpublished) tap — brew tap-new avoids the
+# "clone from a path" mechanism, which would silently drop the gitignored
+# formula files below.
+brew tap-new syedafrozpasha/notetaker --no-git
+
+# Every time ./install.sh regenerates the formulas (first run, or after
+# moving/re-cloning this repo), copy them into that tap:
+cp Formula/*.rb "$(brew --repository syedafrozpasha/notetaker)/Formula/"
+
 brew install syedafrozpasha/notetaker/notetaker-dashboard
 brew install syedafrozpasha/notetaker/notetaker-menubar
 
@@ -331,7 +339,14 @@ brew services stop notetaker-dashboard    # or notetaker-menubar
 ```
 
 Re-run `./install.sh` any time you move or re-clone this repo — the formulas bake in an absolute
-path and must be regenerated (then `brew uninstall`/`brew install` again) if that path changes.
+path and must be regenerated, then re-copied into the tap (the `cp` step above) and
+`brew uninstall`/`brew install` again, if that path changes.
+
+(NOTE — corrected post-implementation: the original text of this section documented `brew tap
+syedafrozpasha/notetaker "$(pwd)"`, which the final whole-branch review found can never work —
+`brew tap <name> <local-path>` does a real `git clone`, which only carries committed files, and
+`Formula/*.rb` is gitignored by this same plan's Global Constraints. The `tap-new` + `cp` recipe
+above is the corrected, verified-working replacement; see the branch's final fix commit.)
 ```
 
 - [ ] **Step 4: Update CLAUDE.md's architecture summary**
@@ -501,7 +516,8 @@ brew list --formula | grep -i notetaker || echo "clean — no notetaker formulas
 **Manual step — do this yourself, deliberately, not as part of an automated run.** Everything above proves the generated formulas are correct and that real `brew` accepts them; it deliberately never starts a real service, since `brew services start` registers a LaunchAgent that will auto-start at every future login on this machine until you explicitly stop it. When you're ready to actually turn this on:
 
 ```bash
-brew tap syedafrozpasha/notetaker "$(pwd)"
+brew tap-new syedafrozpasha/notetaker --no-git
+cp Formula/*.rb "$(brew --repository syedafrozpasha/notetaker)/Formula/"
 brew install syedafrozpasha/notetaker/notetaker-dashboard
 brew services start notetaker-dashboard
 open http://127.0.0.1:8420
