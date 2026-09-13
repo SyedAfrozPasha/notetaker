@@ -560,3 +560,113 @@ def test_base_layout_has_notes_nav_link(client):
 
     assert response.status_code == 200
     assert 'href="/notes"' in response.text
+
+
+def test_notes_detail_shows_structured_fields(client, monkeypatch, tmp_path):
+    from notetaker.service import NoteDetail
+
+    detail = NoteDetail(
+        note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
+        duration_minutes=18, tags=["project-x"], summary_text="We discussed X.",
+        action_items=["Follow up with Bob"], transcript="[00:00:03] hello",
+        path=tmp_path / "2026-09-11-standup.md",
+    )
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", lambda config, note_id: detail)
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_body", lambda config, note_id: "raw body text")
+
+    response = client.get("/notes/2026-09-11-standup")
+
+    assert response.status_code == 200
+    assert "Standup" in response.text
+    assert "We discussed X." in response.text
+    assert "Follow up with Bob" in response.text
+    assert "[00:00:03] hello" in response.text
+    assert "project-x" in response.text
+
+
+def test_notes_detail_shows_none_for_empty_action_items(client, monkeypatch, tmp_path):
+    from notetaker.service import NoteDetail
+
+    detail = NoteDetail(
+        note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
+        duration_minutes=5, tags=[], summary_text="s", action_items=[], transcript="",
+        path=tmp_path / "2026-09-11-standup.md",
+    )
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", lambda config, note_id: detail)
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_body", lambda config, note_id: "")
+
+    response = client.get("/notes/2026-09-11-standup")
+
+    assert response.status_code == 200
+    assert "(none)" in response.text
+
+
+def test_notes_detail_shows_not_found_for_missing_note(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+
+    def fail(config, note_id):
+        raise service.ServiceError(f"no note found with id '{note_id}'.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", fail)
+
+    response = client.get("/notes/nonexistent")
+
+    assert response.status_code == 200
+    assert "no note found" in response.text
+
+
+def test_notes_detail_shows_setup_error_when_config_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+
+    def fail(path):
+        raise service.ServiceError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", fail)
+
+    response = client.get("/notes/2026-09-11-standup")
+
+    assert response.status_code == 200
+    assert "not set up" in response.text
+
+
+def test_notes_detail_has_copy_summary_button(client, monkeypatch, tmp_path):
+    from notetaker.service import NoteDetail
+
+    detail = NoteDetail(
+        note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
+        duration_minutes=5, tags=[], summary_text="We discussed X.", action_items=[], transcript="",
+        path=tmp_path / "2026-09-11-standup.md",
+    )
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", lambda config, note_id: detail)
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_body", lambda config, note_id: "raw")
+
+    response = client.get("/notes/2026-09-11-standup")
+
+    assert 'id="summary-text"' in response.text
+    assert "navigator.clipboard.writeText" in response.text
+
+
+def test_notes_detail_has_copy_full_markdown_button(client, monkeypatch, tmp_path):
+    from notetaker.service import NoteDetail
+
+    detail = NoteDetail(
+        note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
+        duration_minutes=5, tags=[], summary_text="s", action_items=[], transcript="",
+        path=tmp_path / "2026-09-11-standup.md",
+    )
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", lambda config, note_id: detail)
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_body", lambda config, note_id: "the raw markdown body")
+
+    response = client.get("/notes/2026-09-11-standup")
+
+    assert 'id="full-markdown"' in response.text
+    assert "the raw markdown body" in response.text

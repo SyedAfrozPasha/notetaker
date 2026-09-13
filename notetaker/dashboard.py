@@ -187,3 +187,19 @@ async def notes_list(
         "notes_list.html",
         {"notes": notes, "query": query, "tag": tag, "start_date": start_date, "end_date": end_date},
     )
+
+
+@app.get("/notes/{note_id}", response_class=HTMLResponse)
+async def notes_detail(request: Request, note_id: str):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "note_detail.html", {"setup_error": str(exc)})
+
+    try:
+        detail = service.get_note_detail(config, note_id)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "note_detail.html", {"not_found": str(exc)})
+
+    full_markdown = service.get_note_body(config, note_id)
+    return templates.TemplateResponse(request, "note_detail.html", {"detail": detail, "full_markdown": full_markdown})
