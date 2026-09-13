@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -248,3 +248,18 @@ async def notes_edit_submit(
         return templates.TemplateResponse(request, "note_edit.html", {"detail": detail, "error": str(exc)})
 
     return RedirectResponse(f"/notes/{note_id}", status_code=303)
+
+
+@app.post("/notes/{note_id}/delete", response_class=HTMLResponse)
+async def notes_delete(request: Request, note_id: str):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "note_detail.html", {"setup_error": str(exc)})
+
+    try:
+        service.delete_note(config, note_id)
+    except Exception as exc:
+        return templates.TemplateResponse(request, "note_detail.html", {"not_found": str(exc)})
+
+    return Response(status_code=200, headers={"HX-Redirect": "/notes"})

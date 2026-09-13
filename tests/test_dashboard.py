@@ -791,3 +791,47 @@ def test_notes_edit_submit_shows_error_on_failure(client, monkeypatch, tmp_path)
     # current (unsaved) detail — proving context wasn't lost on failure.
     assert 'value="Standup"' in response.text
     assert "original summary text" in response.text
+
+
+def test_notes_delete_removes_note_and_redirects(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.dashboard.service.delete_note", lambda config, note_id: calls.append(note_id)
+    )
+
+    response = client.post("/notes/2026-09-11-standup/delete")
+
+    assert response.status_code == 200
+    assert response.headers["hx-redirect"] == "/notes"
+    assert calls == ["2026-09-11-standup"]
+
+
+def test_notes_delete_shows_error_for_missing_note(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+
+    def fail(config, note_id):
+        raise service.ServiceError(f"no note found with id '{note_id}'.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.delete_note", fail)
+
+    response = client.post("/notes/nonexistent/delete")
+
+    assert response.status_code == 200
+    assert "no note found" in response.text
+
+
+def test_notes_delete_shows_setup_error_when_config_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+
+    def fail(path):
+        raise service.ServiceError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", fail)
+
+    response = client.post("/notes/2026-09-11-standup/delete")
+
+    assert response.status_code == 200
+    assert "not set up" in response.text
