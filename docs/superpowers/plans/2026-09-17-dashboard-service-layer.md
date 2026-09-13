@@ -790,7 +790,7 @@ def get_note_detail(config: Config, note_id: str) -> NoteDetail:
 - [ ] **Step 4: Run the full suite to verify everything passes**
 
 Run: `.venv/bin/pytest -q`
-Expected: PASS, 175 passed (162 + 13 new tests: 8 in `test_notes.py`, 5 in `test_service.py`).
+Expected: PASS, 175 passed (162 + 13 new tests: 8 in `test_notes.py`, 5 in `test_service.py`). (Task 3's review added 2 more regression tests as a direct fix — see the ledger — bringing the actual post-Task-3 count to 177; later tasks' predicted counts below account for this.)
 
 - [ ] **Step 5: Commit**
 
@@ -958,7 +958,7 @@ def search_notes(
 - [ ] **Step 4: Run the full suite to verify everything passes**
 
 Run: `.venv/bin/pytest -q`
-Expected: PASS, 182 passed (175 + 7 new tests: 6 in `test_notes.py`, 1 in `test_service.py`).
+Expected: PASS, 184 passed (177 + 7 new tests: 6 in `test_notes.py`, 1 in `test_service.py`).
 
 - [ ] **Step 5: Commit**
 
@@ -1156,7 +1156,7 @@ def update_config(config_path: Path, updates: dict) -> Config:
 - [ ] **Step 4: Run the full suite to verify everything passes**
 
 Run: `.venv/bin/pytest -q`
-Expected: PASS, 191 passed (182 + 9 new tests: 5 in `test_config.py`, 4 in `test_service.py`).
+Expected: PASS, 193 passed (184 + 9 new tests: 5 in `test_config.py`, 4 in `test_service.py`).
 
 - [ ] **Step 5: Commit**
 
@@ -1175,4 +1175,4 @@ Run the full suite one more time and confirm the final count:
 .venv/bin/pytest -q
 ```
 
-Expected: `191 passed` (plus 1 deselected if run without `-m "not integration"` filtering is not applied — the integration test is unaffected by this plan either way).
+Expected: `193 passed` (plus 1 deselected if run without `-m "not integration"` filtering is not applied — the integration test is unaffected by this plan either way).
