@@ -31,6 +31,15 @@ def note_id_for(title: str, start_time: datetime, notes_dir: Path) -> str:
     return f"{base_id}-{start_time.strftime('%H%M')}"
 
 
+def _render(frontmatter: dict, summary_text: str, action_items_md: str, transcript_md: str) -> str:
+    return (
+        f"---\n{yaml.safe_dump(frontmatter, sort_keys=False)}---\n\n"
+        f"## Summary\n{summary_text}\n\n"
+        f"## Action Items\n{action_items_md}\n\n"
+        f"## Transcript\n{transcript_md}\n"
+    )
+
+
 def _render_note_body(
     title: str,
     start_time: datetime,
@@ -46,12 +55,7 @@ def _render_note_body(
     }
     action_items_md = "\n".join(f"- [ ] {item}" for item in summary.action_items) or "- (none)"
     transcript_md = "\n".join(transcript_lines) or "(no transcript captured)"
-    return (
-        f"---\n{yaml.safe_dump(frontmatter, sort_keys=False)}---\n\n"
-        f"## Summary\n{summary.text}\n\n"
-        f"## Action Items\n{action_items_md}\n\n"
-        f"## Transcript\n{transcript_md}\n"
-    )
+    return _render(frontmatter, summary.text, action_items_md, transcript_md)
 
 
 def write_note(
@@ -76,6 +80,78 @@ def rewrite_note_summary(path: Path, summary: Summary, transcript_lines: list[st
     """
     meta = parse_note_meta(path)
     path.write_text(_render_note_body(meta.title, meta.date, meta.duration_minutes, summary, transcript_lines))
+
+
+def parse_action_items(action_items_md: str) -> list[str]:
+    """Parses a rendered Action Items Markdown block back into a plain list
+    — the inverse of the `"- [ ] {item}"` rendering in `_render`. The
+    `"- (none)"` sentinel (written when there are no action items) parses
+    back to an empty list.
+    """
+    items = []
+    for line in action_items_md.strip().splitlines():
+        line = line.strip()
+        if line.startswith("- [ ] "):
+            items.append(line[len("- [ ] "):])
+    return items
+
+
+def _split_body(body: str) -> tuple[str, str, str]:
+    """Splits a Note's rendered body into (summary_text, action_items_md,
+    transcript_md) exactly as `_render` wrote them, so a field-level edit
+    can leave the sections it doesn't touch byte-for-byte unchanged.
+    """
+    summary_part, _, rest = body.partition("## Action Items")
+    action_part, _, transcript_part = rest.partition("## Transcript")
+    summary_text = summary_part.replace("## Summary", "", 1).strip()
+    return summary_text, action_part.strip(), transcript_part.strip()
+
+
+def update_note_fields(
+    path: Path,
+    *,
+    title: str | None = None,
+    tags: list[str] | None = None,
+    summary_text: str | None = None,
+    action_items: list[str] | None = None,
+) -> None:
+    """Replaces only the given fields of an existing Note, in place, never
+    renaming it (see CONTEXT.md's Note ID definition) and never touching
+    its Transcript section.
+    """
+    meta = parse_note_meta(path)
+    text = path.read_text()
+    _, _, body = text.split("---", 2)
+    current_summary_text, current_action_items_md, transcript_md = _split_body(body)
+
+    new_title = title if title is not None else meta.title
+    new_tags = tags if tags is not None else meta.tags
+    new_summary_text = summary_text if summary_text is not None else current_summary_text
+    if action_items is not None:
+        new_action_items_md = "\n".join(f"- [ ] {item}" for item in action_items) or "- (none)"
+    else:
+        new_action_items_md = current_action_items_md
+
+    frontmatter = {
+        "title": new_title,
+        "date": meta.date.isoformat(),
+        "duration_minutes": meta.duration_minutes,
+        "tags": new_tags,
+    }
+    path.write_text(_render(frontmatter, new_summary_text, new_action_items_md, transcript_md))
+
+
+def parse_note_body(path: Path) -> tuple[str, list[str], str]:
+    """Returns (summary_text, action_items, transcript_text) parsed from a
+    Note's Markdown body — the structured counterpart to `read_note_body`,
+    for callers (e.g. the dashboard's note-detail/edit view) that need the
+    three sections separately rather than as one blob.
+    """
+    body = read_note_body(path)
+    summary_text, action_items_md, transcript_md = _split_body(body)
+    action_items = parse_action_items(action_items_md)
+    transcript_text = "" if transcript_md == "(no transcript captured)" else transcript_md
+    return summary_text, action_items, transcript_text
 
 
 def parse_note_meta(path: Path) -> NoteMeta:

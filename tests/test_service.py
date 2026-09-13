@@ -962,3 +962,63 @@ def test_get_live_transcript_preview_returns_empty_string_before_first_chunk(tmp
     info = SessionInfo(999999, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
 
     assert get_live_transcript_preview(info) == ""
+
+
+def test_update_note_edits_fields_and_returns_note_path(tmp_path):
+    from notetaker.service import update_note
+
+    notes_dir = tmp_path / "notes"
+    note_path = write_note(
+        notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("old", [], ["old-tag"]), ["hi"]
+    )
+
+    result_path = update_note(_config(tmp_path), "2026-09-11-standup", title="New Title", tags=["new-tag"])
+
+    assert result_path == note_path
+    meta = parse_note_meta(note_path)
+    assert meta.title == "New Title"
+    assert meta.tags == ["new-tag"]
+
+
+def test_update_note_raises_for_missing_note(tmp_path):
+    from notetaker.service import update_note
+
+    with pytest.raises(ServiceError, match="no note found"):
+        update_note(_config(tmp_path), "nonexistent", title="X")
+
+
+def test_get_note_detail_returns_structured_fields(tmp_path):
+    from notetaker.service import get_note_detail
+
+    write_note(
+        tmp_path / "notes", "Standup", datetime(2026, 9, 11, 10, 0), 18,
+        Summary(text="We discussed X.", action_items=["Follow up with Bob"], tags=["project-x"]),
+        ["[00:00:03] hello"],
+    )
+
+    detail = get_note_detail(_config(tmp_path), "2026-09-11-standup")
+
+    assert detail.note_id == "2026-09-11-standup"
+    assert detail.title == "Standup"
+    assert detail.duration_minutes == 18
+    assert detail.tags == ["project-x"]
+    assert detail.summary_text == "We discussed X."
+    assert detail.action_items == ["Follow up with Bob"]
+    assert detail.transcript == "[00:00:03] hello"
+
+
+def test_get_note_detail_empty_transcript_is_empty_string(tmp_path):
+    from notetaker.service import get_note_detail
+
+    write_note(tmp_path / "notes", "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], []), [])
+
+    detail = get_note_detail(_config(tmp_path), "2026-09-11-standup")
+
+    assert detail.transcript == ""
+
+
+def test_get_note_detail_raises_for_missing_note(tmp_path):
+    from notetaker.service import get_note_detail
+
+    with pytest.raises(ServiceError, match="no note found"):
+        get_note_detail(_config(tmp_path), "nonexistent")

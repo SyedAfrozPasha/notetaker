@@ -18,9 +18,11 @@ from notetaker.notes import (
     NoteMeta,
     find_note_path,
     list_notes,
+    parse_note_body,
     parse_note_meta,
     read_note_body,
     rewrite_note_summary,
+    update_note_fields,
     write_note,
 )
 from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
@@ -305,6 +307,54 @@ def resummarize_note(config: Config, note_id: str) -> Path:
             raise ServiceError(f"resummarization failed: {exc}") from exc
     rewrite_note_summary(note_path, summary, transcript.splitlines())
     return note_path
+
+
+def update_note(
+    config: Config,
+    note_id: str,
+    *,
+    title: str | None = None,
+    tags: list[str] | None = None,
+    summary_text: str | None = None,
+    action_items: list[str] | None = None,
+) -> Path:
+    note_path = find_note_path(config.notes_dir, note_id)
+    if note_path is None:
+        raise ServiceError(f"no note found with id '{note_id}'.")
+    update_note_fields(note_path, title=title, tags=tags, summary_text=summary_text, action_items=action_items)
+    return note_path
+
+
+@dataclass
+class NoteDetail:
+    note_id: str
+    title: str
+    date: datetime
+    duration_minutes: int
+    tags: list[str]
+    summary_text: str
+    action_items: list[str]
+    transcript: str
+    path: Path
+
+
+def get_note_detail(config: Config, note_id: str) -> NoteDetail:
+    note_path = find_note_path(config.notes_dir, note_id)
+    if note_path is None:
+        raise ServiceError(f"no note found with id '{note_id}'.")
+    meta = parse_note_meta(note_path)
+    summary_text, action_items, transcript = parse_note_body(note_path)
+    return NoteDetail(
+        note_id=meta.note_id,
+        title=meta.title,
+        date=meta.date,
+        duration_minutes=meta.duration_minutes,
+        tags=meta.tags,
+        summary_text=summary_text,
+        action_items=action_items,
+        transcript=transcript,
+        path=meta.path,
+    )
 
 
 @dataclass

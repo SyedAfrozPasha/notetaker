@@ -111,3 +111,114 @@ def test_rewrite_note_summary_does_not_change_the_note_id(tmp_path):
 
     assert path == original_path
     assert len(list(notes_dir.glob("*.md"))) == 1
+
+
+def test_parse_action_items_splits_checkbox_lines():
+    from notetaker.notes import parse_action_items
+
+    assert parse_action_items("- [ ] Follow up with Bob\n- [ ] Send notes") == [
+        "Follow up with Bob",
+        "Send notes",
+    ]
+
+
+def test_parse_action_items_none_sentinel_is_empty_list():
+    from notetaker.notes import parse_action_items
+
+    assert parse_action_items("- (none)") == []
+
+
+def test_update_note_fields_changes_only_given_fields(tmp_path):
+    from notetaker.notes import update_note_fields
+
+    path = write_note(
+        tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 18,
+        Summary(text="old summary", action_items=["old item"], tags=["old-tag"]),
+        ["[00:00:03] hello"],
+    )
+
+    update_note_fields(path, title="Renamed Standup", tags=["new-tag"])
+
+    meta = parse_note_meta(path)
+    assert meta.title == "Renamed Standup"
+    assert meta.tags == ["new-tag"]
+    body = read_note_body(path)
+    assert "old summary" in body  # summary_text untouched
+    assert "old item" in body  # action_items untouched
+    assert "[00:00:03] hello" in body  # transcript untouched
+    assert meta.duration_minutes == 18  # unrelated frontmatter untouched
+
+
+def test_update_note_fields_changes_summary_and_action_items(tmp_path):
+    from notetaker.notes import update_note_fields
+
+    path = write_note(
+        tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 18,
+        Summary(text="old summary", action_items=["old item"], tags=["old-tag"]),
+        ["[00:00:03] hello"],
+    )
+
+    update_note_fields(path, summary_text="new summary", action_items=["new item one", "new item two"])
+
+    body = read_note_body(path)
+    assert "new summary" in body
+    assert "old summary" not in body
+    assert "new item one" in body
+    assert "new item two" in body
+    assert "old item" not in body
+    meta = parse_note_meta(path)
+    assert meta.title == "Standup"  # untouched
+    assert meta.tags == ["old-tag"]  # untouched
+
+
+def test_update_note_fields_does_not_rename_the_note(tmp_path):
+    from notetaker.notes import update_note_fields
+
+    path = write_note(tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], []), ["hi"])
+    original_path = path
+
+    update_note_fields(path, title="A Totally Different Title")
+
+    assert path == original_path
+    assert len(list(tmp_path.glob("*.md"))) == 1
+
+
+def test_update_note_fields_clearing_action_items_writes_none_sentinel(tmp_path):
+    from notetaker.notes import update_note_fields
+
+    path = write_note(
+        tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 5,
+        Summary("s", ["item to remove"], []), ["hi"],
+    )
+
+    update_note_fields(path, action_items=[])
+
+    body = read_note_body(path)
+    assert "item to remove" not in body
+    assert "(none)" in body
+
+
+def test_parse_note_body_splits_all_three_sections(tmp_path):
+    from notetaker.notes import parse_note_body
+
+    path = write_note(
+        tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 5,
+        Summary(text="We discussed X.", action_items=["Follow up"], tags=[]),
+        ["[00:00:03] hello"],
+    )
+
+    summary_text, action_items, transcript = parse_note_body(path)
+
+    assert summary_text == "We discussed X."
+    assert action_items == ["Follow up"]
+    assert transcript == "[00:00:03] hello"
+
+
+def test_parse_note_body_empty_transcript_is_empty_string(tmp_path):
+    from notetaker.notes import parse_note_body
+
+    path = write_note(tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], []), [])
+
+    _, _, transcript = parse_note_body(path)
+
+    assert transcript == ""
