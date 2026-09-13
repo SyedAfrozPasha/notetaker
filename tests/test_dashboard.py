@@ -930,3 +930,50 @@ def test_notes_resummarize_shows_setup_error_when_config_missing(client, monkeyp
 
     assert response.status_code == 200
     assert "not set up" in response.text
+
+
+def test_settings_page_shows_current_config_and_masked_credential(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr(
+        "notetaker.dashboard.service.get_masked_provider_credential", lambda config: "sk-ant••••1234"
+    )
+
+    response = client.get("/settings")
+
+    assert response.status_code == 200
+    assert "sk-ant••••1234" in response.text
+    assert 'value="tiny"' in response.text
+    assert '<option value="claude" selected>' in response.text
+
+
+def test_settings_page_shows_not_set_when_no_credential(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_masked_provider_credential", lambda config: None)
+
+    response = client.get("/settings")
+
+    assert response.status_code == 200
+    assert "Not set" in response.text
+
+
+def test_settings_page_shows_setup_error_when_config_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+
+    def fail(path):
+        raise service.ServiceError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", fail)
+
+    response = client.get("/settings")
+
+    assert response.status_code == 200
+    assert "not set up" in response.text
+
+
+def test_base_layout_has_settings_nav_link(client):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'href="/settings"' in response.text

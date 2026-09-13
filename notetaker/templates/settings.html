@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+{% if setup_error %}
+<p class="error">Notetaker is not set up: {{ setup_error }}</p>
+{% else %}
+<h2>Settings</h2>
+
+<h3>Configuration</h3>
+{% if config_error %}<p class="error">{{ config_error }}</p>{% endif %}
+<form method="post" action="/settings/config">
+  <label>Notes directory <input type="text" name="notes_dir" value="{{ config.notes_dir }}" required></label>
+  <label>Whisper model <input type="text" name="whisper_model" value="{{ config.whisper_model }}" required></label>
+  <label>AI provider
+    <select name="ai_provider">
+      <option value="claude" {% if config.ai_provider == "claude" %}selected{% endif %}>Claude</option>
+      <option value="apple_local" {% if config.ai_provider == "apple_local" %}selected{% endif %}>Apple Local (apfel)</option>
+    </select>
+  </label>
+  <button type="submit">Save Configuration</button>
+</form>
+
+<h3>Claude API Key</h3>
+{% if credential_error %}<p class="error">{{ credential_error }}</p>{% endif %}
+<p>Current key: {{ masked_credential or "Not set" }}</p>
+<form method="post" action="/settings/credential">
+  <label>New API Key <input type="password" name="api_key" required></label>
+  <button type="submit">Save API Key</button>
+</form>
+{% endif %}
+{% endblock %}

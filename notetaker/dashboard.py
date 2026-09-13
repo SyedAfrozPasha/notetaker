@@ -302,3 +302,16 @@ async def notes_resummarize(request: Request, note_id: str):
         )
 
     return RedirectResponse(f"/notes/{note_id}", status_code=303)
+
+
+@app.get("/settings", response_class=HTMLResponse)
+async def settings(request: Request):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "settings.html", {"setup_error": str(exc)})
+
+    masked_credential = service.get_masked_provider_credential(config)
+    return templates.TemplateResponse(
+        request, "settings.html", {"config": config, "masked_credential": masked_credential}
+    )
