@@ -10,7 +10,9 @@
   <label>To <input type="date" name="end_date" value="{{ end_date or '' }}"></label>
   <button type="submit">Search</button>
 </form>
-{% if notes %}
+{% if error %}
+<p class="error">{{ error }}</p>
+{% elif notes %}
 <ul>
   {% for note in notes %}
   <li>

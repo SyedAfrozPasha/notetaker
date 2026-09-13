@@ -7,7 +7,6 @@
 {% else %}
 <h2>{{ detail.title }}</h2>
 <p>{{ detail.date.strftime('%Y-%m-%d %H:%M') }} — {{ detail.duration_minutes }} min{% if detail.tags %} — [{{ detail.tags | join(', ') }}]{% endif %}</p>
-{% if success %}<p class="success">{{ success }}</p>{% endif %}
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 
 <h3>Summary</h3>
@@ -27,16 +26,22 @@
 <textarea readonly>{{ detail.transcript }}</textarea>
 
 <textarea id="full-markdown" readonly hidden>{{ full_markdown }}</textarea>
-<p>
+<div>
   <a href="/notes/{{ detail.note_id }}/edit">Edit</a>
   <button onclick="navigator.clipboard.writeText(document.getElementById('full-markdown').value)">Copy Full Note as Markdown</button>
   <form style="display:inline" method="post" action="/notes/{{ detail.note_id }}/resummarize">
     <button type="submit">Resummarize</button>
   </form>
-  <form style="display:inline" hx-post="/notes/{{ detail.note_id }}/delete" hx-confirm="Delete this note permanently? This cannot be undone.">
+  <form
+    style="display:inline"
+    hx-post="/notes/{{ detail.note_id }}/delete"
+    hx-confirm="Delete this note permanently? This cannot be undone."
+    hx-target="body"
+    hx-swap="outerHTML"
+  >
     <button type="submit">Delete</button>
   </form>
-</p>
+</div>
 
 <p><a href="/notes">&larr; Back to Notes</a></p>
 {% endif %}

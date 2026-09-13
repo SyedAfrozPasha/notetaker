@@ -175,13 +175,21 @@ async def notes_list(
     except service.ServiceError as exc:
         return templates.TemplateResponse(request, "notes_list.html", {"setup_error": str(exc)})
 
-    notes = service.search_notes(
-        config,
-        query=query or None,
-        tag=tag or None,
-        start_date=_parse_date(start_date),
-        end_date=_parse_date(end_date),
-    )
+    try:
+        notes = service.search_notes(
+            config,
+            query=query or None,
+            tag=tag or None,
+            start_date=_parse_date(start_date),
+            end_date=_parse_date(end_date),
+        )
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request,
+            "notes_list.html",
+            {"error": str(exc), "query": query, "tag": tag, "start_date": start_date, "end_date": end_date},
+        )
+
     return templates.TemplateResponse(
         request,
         "notes_list.html",
@@ -198,10 +206,10 @@ async def notes_detail(request: Request, note_id: str):
 
     try:
         detail = service.get_note_detail(config, note_id)
-    except service.ServiceError as exc:
+        full_markdown = service.get_note_body(config, note_id)
+    except Exception as exc:
         return templates.TemplateResponse(request, "note_detail.html", {"not_found": str(exc)})
 
-    full_markdown = service.get_note_body(config, note_id)
     return templates.TemplateResponse(request, "note_detail.html", {"detail": detail, "full_markdown": full_markdown})
 
 
@@ -214,7 +222,7 @@ async def notes_edit_form(request: Request, note_id: str):
 
     try:
         detail = service.get_note_detail(config, note_id)
-    except service.ServiceError as exc:
+    except Exception as exc:
         return templates.TemplateResponse(request, "note_edit.html", {"not_found": str(exc)})
 
     return templates.TemplateResponse(request, "note_edit.html", {"detail": detail})
@@ -241,11 +249,20 @@ async def notes_edit_submit(
             config, note_id, title=title, tags=tag_list, summary_text=summary_text, action_items=item_list
         )
     except Exception as exc:
-        try:
-            detail = service.get_note_detail(config, note_id)
-        except Exception:
-            return templates.TemplateResponse(request, "note_edit.html", {"not_found": str(exc)})
-        return templates.TemplateResponse(request, "note_edit.html", {"detail": detail, "error": str(exc)})
+        # Re-render with what the user just submitted, not a fresh re-fetch
+        # from disk — the save failed, so the on-disk copy is still the OLD
+        # content, and showing that instead would silently discard whatever
+        # the user just typed. Jinja2's `detail.field` syntax works on a
+        # plain dict exactly like it does on a NoteDetail (attribute lookup
+        # falls back to item lookup), so no dataclass is needed here.
+        submitted = {
+            "note_id": note_id,
+            "title": title,
+            "tags": tag_list,
+            "summary_text": summary_text,
+            "action_items": item_list,
+        }
+        return templates.TemplateResponse(request, "note_edit.html", {"detail": submitted, "error": str(exc)})
 
     return RedirectResponse(f"/notes/{note_id}", status_code=303)
 
@@ -277,9 +294,9 @@ async def notes_resummarize(request: Request, note_id: str):
     except Exception as exc:
         try:
             detail = service.get_note_detail(config, note_id)
+            full_markdown = service.get_note_body(config, note_id)
         except Exception:
             return templates.TemplateResponse(request, "note_detail.html", {"not_found": str(exc)})
-        full_markdown = service.get_note_body(config, note_id)
         return templates.TemplateResponse(
             request, "note_detail.html", {"detail": detail, "error": str(exc), "full_markdown": full_markdown}
         )

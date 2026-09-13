@@ -110,6 +110,16 @@ def test_find_note_path_still_finds_a_normal_note(tmp_path):
     assert found == note_path
 
 
+def test_find_note_path_rejects_note_id_with_null_byte(tmp_path):
+    # A note_id containing a null byte makes Path.resolve() raise ValueError
+    # rather than just failing the containment check — this must be treated
+    # as "not a note", not crash the caller with an unhandled exception.
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+
+    assert find_note_path(notes_dir, "2026-09-11-standup\x00") is None
+
+
 def test_rewrite_note_summary_replaces_summary_keeping_title_and_date(tmp_path):
     notes_dir = tmp_path / "notes"
     path = write_note(

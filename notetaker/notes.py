@@ -227,6 +227,12 @@ def read_note_body(path: Path) -> str:
 
 def find_note_path(notes_dir: Path, note_id: str) -> Path | None:
     candidate = notes_dir / f"{note_id}.md"
-    if candidate.resolve().parent != notes_dir.resolve():
+    try:
+        if candidate.resolve().parent != notes_dir.resolve():
+            return None
+    except (OSError, ValueError):
+        # A note_id containing e.g. a null byte makes .resolve() raise
+        # ValueError rather than just failing the containment check —
+        # treat that identically to "not a note", not as a bug to crash on.
         return None
     return candidate if candidate.exists() else None

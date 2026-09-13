@@ -555,6 +555,26 @@ def test_notes_list_shows_setup_error_when_config_missing(client, monkeypatch, t
     assert "not set up" in response.text
 
 
+def test_notes_list_shows_error_when_search_notes_raises(client, monkeypatch, tmp_path):
+    # search_notes can raise a raw (non-ServiceError) exception, e.g. an
+    # unreadable note file surfacing a PermissionError while scanning
+    # summaries for a text match — this must render an inline error, not
+    # an unhandled 500, and must preserve the submitted filter values.
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+
+    def fail(config, **kw):
+        raise PermissionError("[Errno 13] Permission denied")
+
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", fail)
+
+    response = client.get("/notes", params={"query": "roadmap"})
+
+    assert response.status_code == 200
+    assert "Permission denied" in response.text
+    assert 'value="roadmap"' in response.text
+
+
 def test_base_layout_has_notes_nav_link(client):
     response = client.get("/")
 
@@ -760,37 +780,41 @@ def test_notes_edit_submit_updates_note_and_redirects(client, monkeypatch, tmp_p
 
 
 def test_notes_edit_submit_shows_error_on_failure(client, monkeypatch, tmp_path):
-    from notetaker.service import NoteDetail
-
-    # A distinctive summary_text (not the submitted form data) lets the
-    # assertions below prove the re-fetched, still-saved detail was
-    # rendered back into the form — not just an error message on its own,
-    # which would silently lose the user's editing context.
-    detail = NoteDetail(
-        note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
-        duration_minutes=5, tags=[], summary_text="original summary text", action_items=[], transcript="",
-        path=tmp_path / "2026-09-11-standup.md",
-    )
     monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
-    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", lambda config, note_id: detail)
 
     def fail(config, note_id, *, title, tags, summary_text, action_items):
         raise RuntimeError("disk full")
 
     monkeypatch.setattr("notetaker.dashboard.service.update_note", fail)
+    # get_note_detail must NOT be called on this path — the failure re-render
+    # uses what the user just submitted, not a re-fetch from disk (a re-fetch
+    # would show the OLD, unsaved-edit content and silently discard the
+    # user's in-progress typing).
+    def fail_if_called(config, note_id):
+        raise AssertionError("get_note_detail should not be called on a failed save")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", fail_if_called)
 
     response = client.post(
         "/notes/2026-09-11-standup/edit",
-        data={"title": "New Title", "tags": "", "summary_text": "s", "action_items": ""},
+        data={
+            "title": "New Title The User Just Typed",
+            "tags": "proj, planning",
+            "summary_text": "new summary the user just typed",
+            "action_items": "new item one\nnew item two",
+        },
     )
 
     assert response.status_code == 200
     assert "disk full" in response.text
-    # The edit form itself must still be usable, pre-filled with the
-    # current (unsaved) detail — proving context wasn't lost on failure.
-    assert 'value="Standup"' in response.text
-    assert "original summary text" in response.text
+    # The edit form must still be usable, pre-filled with exactly what the
+    # user just submitted — proving their in-progress edit wasn't discarded.
+    assert 'value="New Title The User Just Typed"' in response.text
+    assert "new summary the user just typed" in response.text
+    assert "new item one" in response.text
+    assert "new item two" in response.text
+    assert "proj, planning" in response.text
 
 
 def test_notes_delete_removes_note_and_redirects(client, monkeypatch, tmp_path):
