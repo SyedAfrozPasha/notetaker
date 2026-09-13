@@ -81,6 +81,35 @@ def test_find_note_path(tmp_path):
     assert find_note_path(tmp_path, "nonexistent") is None
 
 
+def test_find_note_path_rejects_path_traversal(tmp_path):
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    secret = tmp_path / "secret.md"
+    secret.write_text("do not touch")
+
+    assert find_note_path(notes_dir, "../secret") is None
+
+
+def test_find_note_path_rejects_embedded_slash(tmp_path):
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "subdir").mkdir()
+    (notes_dir / "subdir" / "note.md").write_text("x")
+
+    assert find_note_path(notes_dir, "subdir/note") is None
+
+
+def test_find_note_path_still_finds_a_normal_note(tmp_path):
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    note_path = notes_dir / "2026-09-11-standup.md"
+    note_path.write_text("content")
+
+    found = find_note_path(notes_dir, "2026-09-11-standup")
+
+    assert found == note_path
+
+
 def test_rewrite_note_summary_replaces_summary_keeping_title_and_date(tmp_path):
     notes_dir = tmp_path / "notes"
     path = write_note(

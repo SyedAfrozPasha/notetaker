@@ -227,4 +227,6 @@ def read_note_body(path: Path) -> str:
 
 def find_note_path(notes_dir: Path, note_id: str) -> Path | None:
     candidate = notes_dir / f"{note_id}.md"
+    if candidate.resolve().parent != notes_dir.resolve():
+        return None
     return candidate if candidate.exists() else None
