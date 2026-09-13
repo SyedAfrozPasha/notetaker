@@ -458,3 +458,105 @@ def test_rejects_request_with_untrusted_host_header(monkeypatch, tmp_path):
     response = untrusted_client.get("/status")
 
     assert response.status_code == 400
+
+
+def test_notes_list_shows_all_notes_when_no_filters(client, monkeypatch, tmp_path):
+    from notetaker.notes import NoteMeta
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    metas = [
+        NoteMeta("2026-09-11-standup", "Standup", datetime(2026, 9, 11, 10, 0), 5, ["proj"], tmp_path / "2026-09-11-standup.md"),
+    ]
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", lambda config, **kw: metas)
+
+    response = client.get("/notes")
+
+    assert response.status_code == 200
+    assert "Standup" in response.text
+    assert "/notes/2026-09-11-standup" in response.text
+
+
+def test_notes_list_filters_by_query(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    calls = {}
+
+    def fake_search(config, **kw):
+        calls.update(kw)
+        return []
+
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", fake_search)
+
+    client.get("/notes", params={"query": "roadmap"})
+
+    assert calls["query"] == "roadmap"
+    assert calls["tag"] is None
+
+
+def test_notes_list_filters_by_tag(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    calls = {}
+
+    def fake_search(config, **kw):
+        calls.update(kw)
+        return []
+
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", fake_search)
+
+    client.get("/notes", params={"tag": "project-x"})
+
+    assert calls["tag"] == "project-x"
+    assert calls["query"] is None
+
+
+def test_notes_list_filters_by_date_range(client, monkeypatch, tmp_path):
+    from datetime import date
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    calls = {}
+
+    def fake_search(config, **kw):
+        calls.update(kw)
+        return []
+
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", fake_search)
+
+    client.get("/notes", params={"start_date": "2026-09-10", "end_date": "2026-09-15"})
+
+    assert calls["start_date"] == date(2026, 9, 10)
+    assert calls["end_date"] == date(2026, 9, 15)
+
+
+def test_notes_list_shows_no_notes_message_when_empty(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", lambda config, **kw: [])
+
+    response = client.get("/notes")
+
+    assert response.status_code == 200
+    assert "No notes found" in response.text
+
+
+def test_notes_list_shows_setup_error_when_config_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+
+    def fail(path):
+        raise service.ServiceError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", fail)
+
+    response = client.get("/notes")
+
+    assert response.status_code == 200
+    assert "not set up" in response.text
+
+
+def test_base_layout_has_notes_nav_link(client):
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert 'href="/notes"' in response.text

@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+{% if setup_error %}
+<p class="error">Notetaker is not set up: {{ setup_error }}</p>
+{% else %}
+<form method="get" action="/notes">
+  <label>Search <input type="text" name="query" value="{{ query or '' }}"></label>
+  <label>Tag <input type="text" name="tag" value="{{ tag or '' }}"></label>
+  <label>From <input type="date" name="start_date" value="{{ start_date or '' }}"></label>
+  <label>To <input type="date" name="end_date" value="{{ end_date or '' }}"></label>
+  <button type="submit">Search</button>
+</form>
+{% if notes %}
+<ul>
+  {% for note in notes %}
+  <li>
+    <a href="/notes/{{ note.note_id }}">{{ note.title }}</a>
+    — {{ note.date.strftime('%Y-%m-%d') }}
+    {% if note.tags %}[{{ note.tags | join(', ') }}]{% endif %}
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p>No notes found.</p>
+{% endif %}
+{% endif %}
+{% endblock %}

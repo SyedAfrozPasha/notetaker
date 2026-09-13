@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
@@ -48,6 +48,15 @@ def _status_context(config: Config) -> dict:
         "elapsed": _format_elapsed(info.start_time, datetime.now()),
         "transcript": service.get_live_transcript_preview(info),
     }
+
+
+def _parse_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -151,3 +160,30 @@ async def cancel(request: Request):
         )
 
     return templates.TemplateResponse(request, "_status.html", {"recording": False, "success": "Recording cancelled."})
+
+
+@app.get("/notes", response_class=HTMLResponse)
+async def notes_list(
+    request: Request,
+    query: str | None = None,
+    tag: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "notes_list.html", {"setup_error": str(exc)})
+
+    notes = service.search_notes(
+        config,
+        query=query or None,
+        tag=tag or None,
+        start_date=_parse_date(start_date),
+        end_date=_parse_date(end_date),
+    )
+    return templates.TemplateResponse(
+        request,
+        "notes_list.html",
+        {"notes": notes, "query": query, "tag": tag, "start_date": start_date, "end_date": end_date},
+    )
