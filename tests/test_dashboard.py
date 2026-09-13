@@ -238,7 +238,14 @@ def test_start_shows_error_and_recording_state_when_a_session_is_already_active(
 
     assert response.status_code == 200
     assert "already running" in response.text
-    assert "Recording" in response.text
+    # "Recording" alone is a vacuous check here — the idle state's own
+    # "Start Recording" button label contains it too. Assert the
+    # recording-state markup specifically, and that the idle Start form is
+    # NOT present, so this genuinely fails if the branch reverts to
+    # hardcoding {"recording": False, ...}.
+    assert 'hx-post="/stop"' in response.text
+    assert "Not recording" not in response.text
+    assert 'id="start-form"' not in response.text
 
 
 def test_start_shows_error_when_unexpected_exception_raised(client, monkeypatch, tmp_path):
@@ -335,7 +342,12 @@ def test_stop_shows_error_when_stop_session_raises(client, monkeypatch, tmp_path
 
     assert response.status_code == 200
     assert "disk full" in response.text
-    assert "Recording" in response.text
+    # "Recording" alone is vacuous — the idle state's "Start Recording"
+    # button contains it too. Assert the recording-state markup
+    # specifically, proving _status_context was re-derived rather than
+    # hardcoded to idle.
+    assert 'hx-post="/stop"' in response.text
+    assert "Not recording" not in response.text
 
 
 def test_cancel_discards_session_and_shows_success(client, monkeypatch, tmp_path):
@@ -392,7 +404,12 @@ def test_cancel_shows_error_when_cancel_session_raises(client, monkeypatch, tmp_
 
     assert response.status_code == 200
     assert "permission denied" in response.text
-    assert "Recording" in response.text
+    # "Recording" alone is vacuous — the idle state's "Start Recording"
+    # button contains it too. Assert the recording-state markup
+    # specifically, proving _status_context was re-derived rather than
+    # hardcoded to idle.
+    assert 'hx-post="/stop"' in response.text
+    assert "Not recording" not in response.text
 
 
 def test_format_elapsed_under_an_hour():
