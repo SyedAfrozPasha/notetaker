@@ -341,13 +341,15 @@ brew services stop notetaker-dashboard    # or notetaker-menubar
 Re-run `./install.sh` any time you move or re-clone this repo — the formulas bake in an absolute
 path and must be regenerated, then re-copied into the tap (the `cp` step above) and
 `brew uninstall`/`brew install` again, if that path changes.
+```
 
 (NOTE — corrected post-implementation: the original text of this section documented `brew tap
 syedafrozpasha/notetaker "$(pwd)"`, which the final whole-branch review found can never work —
 `brew tap <name> <local-path>` does a real `git clone`, which only carries committed files, and
 `Formula/*.rb` is gitignored by this same plan's Global Constraints. The `tap-new` + `cp` recipe
-above is the corrected, verified-working replacement; see the branch's final fix commit.)
-```
+above is the corrected, verified-working replacement; see the branch's final fix commit. This
+note is outside the fence deliberately — everything inside it is meant to be pasted into
+README.md verbatim.)
 
 - [ ] **Step 4: Update CLAUDE.md's architecture summary**
 

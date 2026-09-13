@@ -42,5 +42,5 @@ Key design decisions worth knowing before changing this system:
 
 - `./install.sh` — one-time setup (creates `.venv`, installs pinned deps).
 - `.venv/bin/pytest -q` — full test suite.
-- `.venv/bin/pytest -m "not integration" -q` — fast suite only, skips the network-dependent faster-whisper integration test.
+- `.venv/bin/pytest -m "not integration" -q` — fast suite only, skips the two slower integration tests (a network-dependent faster-whisper download and a real-`brew` install/uninstall round-trip).
 - Use `.venv/bin/python` / `.venv/bin/pytest` explicitly; there is no ambient install.
