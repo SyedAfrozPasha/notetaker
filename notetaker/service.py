@@ -5,7 +5,7 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -40,6 +40,7 @@ class SessionInfo:
     title: str
     start_time: datetime
     session_dir: Path
+    tags: list[str] = field(default_factory=list)
 
 
 def session_file_path(config_dir: Path) -> Path:
@@ -93,7 +94,7 @@ def _release_claim(session_file: Path, claim_path: Path, *, restore: bool) -> No
             pass
 
 
-def start_session(title: str, config: Config, config_dir: Path) -> SessionInfo:
+def start_session(title: str, config: Config, config_dir: Path, tags: list[str] | None = None) -> SessionInfo:
     session_file = session_file_path(config_dir)
     if session_file.with_suffix(".salvaging").exists():
         raise ServiceError("a session is currently being stopped. Try again in a moment.")
@@ -137,10 +138,11 @@ def start_session(title: str, config: Config, config_dir: Path) -> SessionInfo:
                 "title": title,
                 "start_time": start_time.isoformat(),
                 "session_dir": str(session_dir),
+                "tags": tags or [],
             }
         )
     )
-    return SessionInfo(pid=proc.pid, title=title, start_time=start_time, session_dir=session_dir)
+    return SessionInfo(pid=proc.pid, title=title, start_time=start_time, session_dir=session_dir, tags=tags or [])
 
 
 def read_active_session(config_dir: Path) -> SessionInfo:
@@ -154,6 +156,7 @@ def read_active_session(config_dir: Path) -> SessionInfo:
             title=raw["title"],
             start_time=datetime.fromisoformat(raw["start_time"]),
             session_dir=Path(raw["session_dir"]),
+            tags=raw.get("tags") or [],
         )
     except (ValueError, KeyError, TypeError, OSError) as exc:
         raise ServiceError(
@@ -222,6 +225,9 @@ def _finalize_stop(
     if on_phase:
         on_phase("Summarizing...")
     summary = _summarize_or_fallback(transcript, config)
+    if info.tags:
+        merged_tags = list(dict.fromkeys(info.tags + summary.tags))
+        summary = replace(summary, tags=merged_tags)
 
     note_path = write_note(
         config.notes_dir, info.title, info.start_time, duration_minutes, summary, transcript_lines

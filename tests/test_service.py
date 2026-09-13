@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from notetaker.config import Config
-from notetaker.notes import write_note
+from notetaker.notes import parse_note_meta, write_note
 from notetaker.recorder import BlackHoleStatus
 from notetaker.service import (
     ServiceError,
@@ -110,6 +110,7 @@ def test_start_session_writes_session_file_and_spawns_recorder(monkeypatch, tmp_
         "title": "Standup",
         "start_time": info.start_time.isoformat(),
         "session_dir": str(info.session_dir),
+        "tags": [],
     }
 
 
@@ -125,6 +126,32 @@ def test_start_session_fails_when_recorder_exits_immediately(monkeypatch, tmp_pa
         start_session("Standup", _config(tmp_path), tmp_path)
 
     assert not (tmp_path / "current_session.json").exists()
+
+
+def test_start_session_persists_tags(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
+    fake_proc = MagicMock(pid=555)
+    fake_proc.poll.return_value = None
+    monkeypatch.setattr("notetaker.service.subprocess.Popen", lambda *a, **k: fake_proc)
+
+    info = start_session("Standup", _config(tmp_path), tmp_path, tags=["project-x", "planning"])
+
+    assert info.tags == ["project-x", "planning"]
+    raw = json.loads((tmp_path / "current_session.json").read_text())
+    assert raw["tags"] == ["project-x", "planning"]
+
+
+def test_start_session_defaults_to_no_tags(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
+    fake_proc = MagicMock(pid=556)
+    fake_proc.poll.return_value = None
+    monkeypatch.setattr("notetaker.service.subprocess.Popen", lambda *a, **k: fake_proc)
+
+    info = start_session("Standup", _config(tmp_path), tmp_path)
+
+    assert info.tags == []
 
 
 def test_read_active_session_fails_when_no_session_file(tmp_path):
@@ -150,8 +177,105 @@ def test_read_active_session_parses_valid_file(tmp_path):
     assert info == SessionInfo(999999, "Standup", datetime(2026, 9, 11, 10, 0), tmp_path)
 
 
+def test_read_active_session_parses_tags(tmp_path):
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {
+                "pid": 999999,
+                "title": "Standup",
+                "start_time": "2026-09-11T10:00:00",
+                "session_dir": str(tmp_path),
+                "tags": ["proj"],
+            }
+        )
+    )
+    info = read_active_session(tmp_path)
+    assert info.tags == ["proj"]
+
+
+def test_read_active_session_defaults_tags_when_absent(tmp_path):
+    session_file = tmp_path / "current_session.json"
+    session_file.write_text(
+        json.dumps(
+            {"pid": 999999, "title": "Standup", "start_time": "2026-09-11T10:00:00", "session_dir": str(tmp_path)}
+        )
+    )
+    info = read_active_session(tmp_path)
+    assert info.tags == []
+
+
 def _session_info(session_dir):
     return SessionInfo(pid=999999, title="Standup", start_time=datetime(2026, 9, 11, 10, 0), session_dir=session_dir)
+
+
+def test_stop_session_merges_session_tags_before_provider_tags(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n")
+    (tmp_path / "current_session.json").write_text("{}")
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+    monkeypatch.setattr(
+        "notetaker.service.summarize_transcript",
+        lambda transcript, provider: Summary(text="s", action_items=[], tags=["ai-tag"]),
+    )
+    info = SessionInfo(
+        pid=999999, title="Standup", start_time=datetime(2026, 9, 11, 10, 0),
+        session_dir=session_dir, tags=["user-tag"],
+    )
+
+    note_path = stop_session(
+        info, Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+    )
+
+    assert parse_note_meta(note_path).tags == ["user-tag", "ai-tag"]
+
+
+def test_stop_session_dedupes_tags_the_provider_also_produced(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n")
+    (tmp_path / "current_session.json").write_text("{}")
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+    monkeypatch.setattr(
+        "notetaker.service.summarize_transcript",
+        lambda transcript, provider: Summary(text="s", action_items=[], tags=["shared-tag", "ai-only"]),
+    )
+    info = SessionInfo(
+        pid=999999, title="Standup", start_time=datetime(2026, 9, 11, 10, 0),
+        session_dir=session_dir, tags=["shared-tag"],
+    )
+
+    note_path = stop_session(
+        info, Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+    )
+
+    assert parse_note_meta(note_path).tags == ["shared-tag", "ai-only"]
+
+
+def test_stop_session_leaves_provider_tags_alone_when_no_session_tags(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n")
+    (tmp_path / "current_session.json").write_text("{}")
+    notes_dir = tmp_path / "notes"
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+    monkeypatch.setattr(
+        "notetaker.service.summarize_transcript",
+        lambda transcript, provider: Summary(text="s", action_items=[], tags=["ai-tag-a", "ai-tag-b"]),
+    )
+    info = SessionInfo(999999, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)  # no tags — defaults to []
+
+    note_path = stop_session(
+        info, Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+    )
+
+    assert parse_note_meta(note_path).tags == ["ai-tag-a", "ai-tag-b"]
 
 
 def test_stop_session_skips_provider_call_when_transcript_empty(monkeypatch, tmp_path):
