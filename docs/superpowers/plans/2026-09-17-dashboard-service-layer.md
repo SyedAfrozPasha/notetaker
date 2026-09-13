@@ -185,7 +185,7 @@ must become:
 - [ ] **Step 2: Run the new tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_service.py -k "tags" -v`
-Expected: FAIL — `SessionInfo() got an unexpected keyword argument 'tags'` / `start_session() got an unexpected keyword argument 'tags'` (the six new tests), plus the modified `test_start_session_writes_session_file_and_spawns_recorder` failing on a dict-equality mismatch (missing `"tags"` key on the actual side).
+Expected: FAIL — `SessionInfo() got an unexpected keyword argument 'tags'` / `start_session() got an unexpected keyword argument 'tags'` (the seven new/changed tests: six brand-new plus one modification to an existing test), plus the modified `test_start_session_writes_session_file_and_spawns_recorder` failing on a dict-equality mismatch (missing `"tags"` key on the actual side).
 
 - [ ] **Step 3: Implement**
 
@@ -282,7 +282,7 @@ change to:
 - [ ] **Step 4: Run the full suite to verify everything passes**
 
 Run: `.venv/bin/pytest -q`
-Expected: PASS, 156 passed (150 + 6 new tests; the modified existing test doesn't add to the count).
+Expected: PASS, 157 passed (150 + 7 new tests — actual implementation found the brief undercounted; there are 7 new test functions, not 6, plus the modified existing test which doesn't add to the count).
 
 - [ ] **Step 5: Commit**
 
@@ -392,7 +392,7 @@ def get_live_transcript_preview(info: SessionInfo) -> str:
 - [ ] **Step 4: Run the full suite to verify everything passes**
 
 Run: `.venv/bin/pytest -q`
-Expected: PASS, 161 passed (156 + 5 new tests).
+Expected: PASS, 162 passed (157 + 5 new tests).
 
 - [ ] **Step 5: Commit**
 
@@ -790,7 +790,7 @@ def get_note_detail(config: Config, note_id: str) -> NoteDetail:
 - [ ] **Step 4: Run the full suite to verify everything passes**
 
 Run: `.venv/bin/pytest -q`
-Expected: PASS, 174 passed (161 + 13 new tests: 8 in `test_notes.py`, 5 in `test_service.py`).
+Expected: PASS, 175 passed (162 + 13 new tests: 8 in `test_notes.py`, 5 in `test_service.py`).
 
 - [ ] **Step 5: Commit**
 
@@ -958,7 +958,7 @@ def search_notes(
 - [ ] **Step 4: Run the full suite to verify everything passes**
 
 Run: `.venv/bin/pytest -q`
-Expected: PASS, 181 passed (174 + 7 new tests: 6 in `test_notes.py`, 1 in `test_service.py`).
+Expected: PASS, 182 passed (175 + 7 new tests: 6 in `test_notes.py`, 1 in `test_service.py`).
 
 - [ ] **Step 5: Commit**
 
@@ -1156,7 +1156,7 @@ def update_config(config_path: Path, updates: dict) -> Config:
 - [ ] **Step 4: Run the full suite to verify everything passes**
 
 Run: `.venv/bin/pytest -q`
-Expected: PASS, 190 passed (181 + 9 new tests: 5 in `test_config.py`, 4 in `test_service.py`).
+Expected: PASS, 191 passed (182 + 9 new tests: 5 in `test_config.py`, 4 in `test_service.py`).
 
 - [ ] **Step 5: Commit**
 
@@ -1175,4 +1175,4 @@ Run the full suite one more time and confirm the final count:
 .venv/bin/pytest -q
 ```
 
-Expected: `190 passed` (plus 1 deselected if run without `-m "not integration"` filtering is not applied — the integration test is unaffected by this plan either way).
+Expected: `191 passed` (plus 1 deselected if run without `-m "not integration"` filtering is not applied — the integration test is unaffected by this plan either way).
