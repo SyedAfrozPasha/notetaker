@@ -280,6 +280,8 @@ notetaker show 2026-09-11-team-standup            # print one note's full Markdo
 notetaker resummarize 2026-09-11-team-standup     # redo the summary from the saved transcript
 notetaker set-api-key                             # store/replace your Claude API key
 notetaker show-api-key                            # show the masked, currently active key
+notetaker dashboard                               # local web UI at http://127.0.0.1:8420 (see "Web dashboard")
+notetaker menubar                                 # menu bar app with one-click start/stop (see "Menu bar app")
 ```
 
 A typical session:
