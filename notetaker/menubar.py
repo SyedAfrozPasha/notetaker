@@ -8,9 +8,15 @@ from notetaker import service
 from notetaker.config import CONFIG_DIR, ConfigError, load_config
 from notetaker.service import SessionInfo
 
-IDLE_TITLE = "Notetaker"
-POLL_INTERVAL_SECONDS = 2
-SETUP_WARNING_TITLE = "⚠️ Notetaker"
+APP_NAME = "Notetaker"
+# 1s so the elapsed time in the strip advances every second, not in 2s jumps.
+POLL_INTERVAL_SECONDS = 1
+SETUP_WARNING_TITLE = "⚠️"
+
+# Template (black + alpha) PNGs, so macOS tints them for light/dark menu bars.
+ASSETS_DIR = Path(__file__).parent / "assets"
+ICON_IDLE = str(ASSETS_DIR / "menubar-idle.png")  # an open ring
+ICON_RECORDING = str(ASSETS_DIR / "menubar-recording.png")  # the ring with a filled dot: a record glyph
 
 
 def format_elapsed(start_time: datetime, now: datetime) -> str:
@@ -23,11 +29,16 @@ def format_elapsed(start_time: datetime, now: datetime) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
-def menu_bar_title(info: SessionInfo | None, now: datetime) -> str:
-    """The text shown directly in the macOS menu bar strip."""
+def menu_bar_title(info: SessionInfo | None, now: datetime) -> str | None:
+    """The text shown next to the icon in the macOS menu bar strip: the
+    elapsed time while recording, nothing (icon only) when idle."""
     if info is None:
-        return IDLE_TITLE
-    return f"⏺ {format_elapsed(info.start_time, now)}"
+        return None
+    return format_elapsed(info.start_time, now)
+
+
+def menu_bar_icon(info: SessionInfo | None) -> str:
+    return ICON_RECORDING if info is not None else ICON_IDLE
 
 
 def toggle_item_title(info: SessionInfo | None) -> str:
@@ -50,7 +61,7 @@ class NotetakerMenuBarApp(rumps.App):
         """`dashboard_url` is set by `notetaker dashboard`, which serves the
         web dashboard from a background thread of this same process and adds
         an "Open Dashboard" item; `notetaker menubar` runs without it."""
-        super().__init__(IDLE_TITLE, quit_button="Quit")
+        super().__init__(APP_NAME, title=None, icon=ICON_IDLE, template=True, quit_button="Quit")
         self._dashboard_url = dashboard_url
         self._toggle_item = rumps.MenuItem("Start Recording", callback=self._on_toggle)
         items = [self._toggle_item]
@@ -78,6 +89,9 @@ class NotetakerMenuBarApp(rumps.App):
             self._notify("Recovered a crashed session", "Saved as a note", salvaged_path.name)
         info = service.get_current_session_status(CONFIG_DIR)
         self.title = menu_bar_title(info, datetime.now())
+        icon = menu_bar_icon(info)
+        if self.icon != icon:  # setting the icon reloads the image; only do it on a state change
+            self.icon = icon
         self._toggle_item.title = toggle_item_title(info)
 
     def _on_toggle(self, _sender):

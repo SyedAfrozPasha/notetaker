@@ -371,11 +371,11 @@ notetaker menubar
 ```
 Don't run `notetaker menubar` alongside `notetaker dashboard` — you'd get two icons.
 
-You'll see a small icon in your macOS menu bar showing either **Notetaker** (idle) or
-**⏺ MM:SS** (recording, live-updating). Click it for a **Start Recording** / **Stop
-Recording** menu item (recordings started this way get an auto-generated title like
-"Meeting 2026-09-11 09:30"), an **Open Dashboard** item (when run via
-`notetaker dashboard`), and a **Quit** item.
+You'll see a small ring icon in your macOS menu bar when idle; while recording it becomes
+a record glyph (ring with a dot) followed by the elapsed time, **MM:SS**, ticking every
+second. Click it for a **Start Recording** / **Stop Recording** menu item (recordings
+started this way get an auto-generated title like "Meeting 2026-09-11 09:30"), an
+**Open Dashboard** item (when run via `notetaker dashboard`), and a **Quit** item.
 
 ---
 
@@ -401,9 +401,10 @@ What it offers:
   transcript so far as **Me** / **Others** rows (recorder notices such as "no meeting
   audio detected" appear inline in amber), a segment count and "last transcribed Ns ago"
   so you can tell audio is flowing, and **Stop & save** / **Cancel** buttons. The
-  transcript pane follows the newest line unless you scroll up to re-read. Unlike the
-  CLI, **Cancel** is available here — it discards an in-progress session with no note
-  produced. Audio-routing warnings from start stay on screen for the whole session. The
+  transcript pane follows the newest line unless you scroll up to re-read. **Stop & save**
+  switches the page to a processing view (which step is running, how long so far) and
+  opens the finished note as soon as it is saved. Unlike the CLI, **Cancel** is available
+  here — it discards an in-progress session with no note produced. Audio-routing warnings from start stay on screen for the whole session. The
   page polls its own status every 2 seconds, and — like the menu bar app — this is also
   when it checks for and salvages any crashed session.
 - **Notes** (`/notes`) — browse and search all saved notes by text, tag, or date range.

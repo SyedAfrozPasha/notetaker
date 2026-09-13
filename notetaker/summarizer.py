@@ -79,6 +79,46 @@ def strip_timestamps(transcript: str) -> str:
     return "\n".join(line for line in stripped.splitlines() if line.strip())
 
 
+_SPEAKER_LABEL = re.compile(r"^(?:Me|Others):\s*")
+ECHO_MIN_CHARS = 25  # shorter lines ("Yes.", "everywhere.") are too common to count as copying
+ECHO_FALLBACK_TEXT = (
+    "Summary unavailable: the AI model repeated the transcript instead of summarizing it. "
+    "Use Resummarize to try again."
+)
+
+
+def _normalize(line: str) -> str:
+    return " ".join(line.lower().split())
+
+
+def clean_summary_text(text: str, transcript: str) -> str:
+    """Small on-device models sometimes hand back the transcript itself —
+    speaker labels and all — as the "minutes". Strip the `Me:`/`Others:`
+    labels, drop every line copied verbatim from the transcript, and when
+    that was most of the text, say so instead of presenting a transcript as
+    a summary (the note still has the real transcript; Resummarize retries).
+    """
+    spoken = {
+        _normalize(_SPEAKER_LABEL.sub("", line.strip()))
+        for line in strip_timestamps(transcript).splitlines()
+        if line.strip()
+    }
+    kept: list[str] = []
+    copied_chars = total_chars = 0
+    for line in text.splitlines():
+        bare = _SPEAKER_LABEL.sub("", line.strip())
+        total_chars += len(bare)
+        if len(bare) >= ECHO_MIN_CHARS and _normalize(bare) in spoken:
+            copied_chars += len(bare)
+            continue
+        if bare or (kept and kept[-1]):  # collapse runs of blank lines
+            kept.append(bare)
+    result = "\n".join(kept).strip()
+    if not result or (total_chars and copied_chars / total_chars >= 0.5):
+        return ECHO_FALLBACK_TEXT
+    return result
+
+
 def summarize_transcript(
     transcript: str,
     provider: Provider,
@@ -106,7 +146,10 @@ def summarize_transcript(
         return result
 
     if len(chunks) == 1:
-        return _summarize(chunks[0])
+        single = _summarize(chunks[0])
+        return Summary(
+            text=clean_summary_text(single.text, transcript), action_items=single.action_items, tags=single.tags
+        )
     partials = [_summarize(chunk) for chunk in chunks]
     combined_text = "\n\n".join(p.text for p in partials)
     if estimate_tokens(combined_text) > chunk_token_limit:
@@ -117,7 +160,7 @@ def summarize_transcript(
     action_items = _dedupe_preserve_order(
         [item for p in partials for item in p.action_items] + reduced.action_items
     )
-    return Summary(text=reduced.text, action_items=action_items, tags=tags)
+    return Summary(text=clean_summary_text(reduced.text, transcript), action_items=action_items, tags=tags)
 
 
 def _parse_summary_json(raw: str) -> dict:
@@ -142,8 +185,9 @@ SUMMARY_PROMPT_TEMPLATE = """You are writing the minutes of a meeting (MoM) from
 Lines prefixed "Me:" were spoken by the person recording; lines prefixed "Others:" by other participants.
 
 Respond with ONLY a JSON object with exactly these keys:
-- "text": the minutes as a string — key discussion points, then decisions made, then open questions. Be concrete; \
-keep names, numbers, and dates from the transcript. No preamble.
+- "text": the minutes as a string, written in your own words as short bullet points ("- ") under three headings: \
+"Discussion:", "Decisions:", "Open questions:". Be concrete; keep names, numbers, and dates from the transcript. \
+Never copy sentences from the transcript, and never include the "Me:"/"Others:" prefixes. No preamble.
 - "action_items": a list of strings, one per task, each formatted "Owner: task (due date if mentioned)". \
 Use "Me" when the recorder took the task; leave out the owner only if unknown.
 - "tags": a list of 2 to 5 short lowercase topic tags.

@@ -272,7 +272,18 @@ def test_start_shows_error_when_unexpected_exception_raised(client, monkeypatch,
     assert "recorder failed to start" in response.text
 
 
-def test_stop_saves_note_and_shows_success(client, monkeypatch, tmp_path):
+def _wait_for_stop_job():
+    """Joins the background stop thread so the next /status poll sees its result."""
+    from notetaker import dashboard
+
+    job = dashboard._stop_job
+    if job is not None and job.thread is not None:
+        job.thread.join(timeout=5)
+
+
+def test_stop_shows_processing_with_phases_then_redirects_to_the_saved_note(client, monkeypatch, tmp_path):
+    import threading
+
     session_dir = tmp_path / "sessions" / "20260911-100000"
     session_dir.mkdir(parents=True)
     info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
@@ -283,38 +294,70 @@ def test_stop_saves_note_and_shows_success(client, monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
     monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
     monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
-    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
-    monkeypatch.setattr(
-        "notetaker.dashboard.service.stop_session", lambda info, config, config_dir: note_path
-    )
+    monkeypatch.setattr("notetaker.dashboard.service.check_and_salvage_orphan", lambda config, config_dir: None)
+    state = {"info": info}
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: state["info"])
+    reached_summarizing = threading.Event()
+    release = threading.Event()
+
+    def slow_stop(info, config, config_dir, on_phase=None):
+        state["info"] = None  # stop_session claims the session file first
+        on_phase("Summarizing... chunk 2 of 3")
+        reached_summarizing.set()
+        release.wait(timeout=5)
+        return note_path
+
+    monkeypatch.setattr("notetaker.dashboard.service.stop_session", slow_stop)
 
     response = client.post("/stop")
-
     assert response.status_code == 200
-    assert "Not recording" in response.text
-    assert "2026-09-11-standup.md" in response.text
+    assert "Processing" in response.text
+    assert 'hx-post="/stop"' not in response.text  # no second Stop button while saving
+
+    assert reached_summarizing.wait(timeout=5)
+    polled = client.get("/status")
+    assert "Processing" in polled.text
+    assert "Summarizing... chunk 2 of 3" in polled.text
+    assert "Not recording" not in polled.text
+
+    # Starting a new recording while the old one is still being saved is refused.
+    blocked = client.post("/start", data={"title": "Too soon"})
+    assert "Processing" in blocked.text
+
+    release.set()
+    _wait_for_stop_job()
+    done = client.get("/status")
+    assert done.headers["hx-redirect"] == "/notes/2026-09-11-standup?saved=1"
+
+    # Consumed: the next poll is an ordinary idle status again.
+    idle = client.get("/status")
+    assert "hx-redirect" not in idle.headers
+    assert "Not recording" in idle.text
 
 
-def test_stop_shows_summarization_failed_note(client, monkeypatch, tmp_path):
-    session_dir = tmp_path / "sessions" / "20260911-100000"
-    session_dir.mkdir(parents=True)
-    info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
-    note_path = tmp_path / "notes" / "2026-09-11-standup.md"
-    note_path.parent.mkdir(parents=True)
-    note_path.write_text("---\ntitle: Standup\n---\n\n## Summary\nSummarization failed: network down\n")
+def test_note_detail_shows_saved_banner_and_summarization_failure_after_stop(client, monkeypatch, tmp_path):
+    from notetaker.service import NoteDetail
 
+    detail = NoteDetail(
+        note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
+        duration_minutes=18, tags=[], summary_text="Summarization failed: network down",
+        action_items=[], transcript="[00:00:03] hello", path=tmp_path / "2026-09-11-standup.md",
+    )
     monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
-    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
     monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
-    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
-    monkeypatch.setattr(
-        "notetaker.dashboard.service.stop_session", lambda info, config, config_dir: note_path
-    )
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", lambda config, note_id: detail)
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_body", lambda config, note_id: "raw")
 
-    response = client.post("/stop")
+    failed = client.get("/notes/2026-09-11-standup?saved=1")
+    assert "summarization failed" in failed.text.lower()
+    assert "Resummarize" in failed.text
 
-    assert response.status_code == 200
-    assert "summarization failed" in response.text.lower()
+    detail.summary_text = "All good."
+    ok = client.get("/notes/2026-09-11-standup?saved=1")
+    assert "Recording saved." in ok.text
+
+    plain = client.get("/notes/2026-09-11-standup")
+    assert "Recording saved." not in plain.text
 
 
 def test_stop_shows_error_when_no_active_session(client, monkeypatch, tmp_path):
@@ -340,21 +383,23 @@ def test_stop_shows_error_when_stop_session_raises(client, monkeypatch, tmp_path
     monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
     monkeypatch.setattr("notetaker.dashboard.service.get_live_transcript_preview", lambda info: "")
 
-    def fail(info, config, config_dir):
+    def fail(info, config, config_dir, on_phase=None):
         raise RuntimeError("disk full")
 
     monkeypatch.setattr("notetaker.dashboard.service.stop_session", fail)
+    monkeypatch.setattr("notetaker.dashboard.service.check_and_salvage_orphan", lambda config, config_dir: None)
 
     response = client.post("/stop")
-
     assert response.status_code == 200
-    assert "disk full" in response.text
-    # "Recording" alone is vacuous — the idle state's "Start Recording"
-    # button contains it too. Assert the recording-state markup
-    # specifically, proving _status_context was re-derived rather than
-    # hardcoded to idle.
-    assert 'hx-post="/stop"' in response.text
-    assert "Not recording" not in response.text
+    assert "Processing" in response.text
+
+    _wait_for_stop_job()
+    polled = client.get("/status")
+    assert "disk full" in polled.text
+    # The session is still there (stop_session failed before claiming it), so
+    # the poll re-derives the recording state rather than showing idle.
+    assert 'hx-post="/stop"' in polled.text
+    assert "Not recording" not in polled.text
 
 
 def test_cancel_discards_session_and_shows_success(client, monkeypatch, tmp_path):

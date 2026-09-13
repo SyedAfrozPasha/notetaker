@@ -6,7 +6,21 @@
 {% if warning %}<div class="banner warning">Warning: {{ warning }}</div>{% endif %}
 {% if error %}<div class="banner error">{{ error }}</div>{% endif %}
 
-{% if recording %}
+{% if processing %}
+<div class="card">
+  <div class="rec-head">
+    <span class="spinner" aria-hidden="true"></span>
+    <div class="titles">
+      <span class="live-label muted">Processing</span>
+      <h2 class="rec-title">Saving your recording…</h2>
+    </div>
+    <div class="timer" aria-label="elapsed">{{ elapsed }}</div>
+  </div>
+  <p class="meta" style="margin:.9rem 0 .3rem"><span class="phase">{{ phase }}</span></p>
+  <p class="meta" style="margin:0">Transcribing the last chunk and writing the minutes. This page opens the note when it is ready.</p>
+</div>
+
+{% elif recording %}
 <div class="card">
   <div class="rec-head">
     <span class="dot" aria-hidden="true"></span>

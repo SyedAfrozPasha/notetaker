@@ -34,6 +34,8 @@
     </form>
   </div>
 </div>
+{% if success %}<div class="banner success">{{ success }}</div>{% endif %}
+{% if warning %}<div class="banner warning">{{ warning }}</div>{% endif %}
 {% if error %}<div class="banner error">{{ error }}</div>{% endif %}
 
 <div class="card">

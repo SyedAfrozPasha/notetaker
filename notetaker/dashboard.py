@@ -214,7 +214,17 @@ def status(request: Request):
     except service.ServiceError as exc:
         return templates.TemplateResponse(request, "_status.html", {"setup_error": str(exc)})
 
+    if _stop_job is not None and _stop_job.running:
+        return templates.TemplateResponse(request, "_status.html", _processing_context(_stop_job))
     context = {}
+    finished = _finished_stop_job()
+    if finished is not None and finished.note_path is not None:
+        # htmx follows HX-Redirect on a polled response too: the page that
+        # was showing "Processing..." lands on the freshly saved Note.
+        return Response(status_code=200, headers={"HX-Redirect": f"/notes/{finished.note_path.stem}?saved=1"})
+    if finished is not None:
+        context["error"] = finished.error
+
     try:
         salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
     except Exception:
@@ -232,6 +242,9 @@ def start(request: Request, title: str = Form(...), tags: str = Form("")):
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
         return templates.TemplateResponse(request, "_status.html", {"setup_error": str(exc)})
+
+    if _stop_job is not None and _stop_job.running:
+        return templates.TemplateResponse(request, "_status.html", _processing_context(_stop_job))
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     context = {}
@@ -254,21 +267,63 @@ def start(request: Request, title: str = Form(...), tags: str = Form("")):
     return templates.TemplateResponse(request, "_status.html", {**_status_context(config), **context})
 
 
-def _note_summarization_failed(note_path: Path) -> bool:
-    """Whether a just-saved Note's Summary indicates summarization failed —
-    matches the exact fallback text `service._summarize_or_fallback` writes.
-    Duplicated from notetaker.menubar's identical helper — see this plan's
-    Global Constraints on why dashboard.py doesn't import from menubar.py.
-    """
-    return "Summarization failed:" in note_path.read_text()
+@dataclass
+class StopJob:
+    """`POST /stop` runs `stop_session` on a background thread — transcribing
+    the last chunk and summarizing can take a minute or more, and a request
+    that blocks that long shows the user nothing. The status poll renders
+    the job's current phase while it runs and, once the Note exists, sends
+    the browser to it (HX-Redirect). One job at a time: there is only ever
+    one Session to stop."""
+
+    started_at: datetime
+    phase: str = "Stopping recorder..."
+    note_path: Path | None = None
+    error: str | None = None
+    thread: threading.Thread | None = None
+
+    @property
+    def running(self) -> bool:
+        return self.thread is not None and self.thread.is_alive()
+
+
+_stop_job: StopJob | None = None
+
+
+def _run_stop(job: StopJob, info: service.SessionInfo, config: Config) -> None:
+    try:
+        job.note_path = service.stop_session(
+            info, config, CONFIG_DIR, on_phase=lambda phase: setattr(job, "phase", phase)
+        )
+    except Exception as exc:
+        job.error = f"Could not save the recording: {exc}"
+
+
+def _processing_context(job: StopJob) -> dict:
+    return {"processing": True, "phase": job.phase, "elapsed": _format_elapsed(job.started_at, datetime.now())}
+
+
+def _finished_stop_job() -> StopJob | None:
+    """Pops the stop job if it has finished (or returns None while it runs
+    or when there is none), so exactly one status poll acts on its result."""
+    global _stop_job
+    job = _stop_job
+    if job is None or job.running:
+        return None
+    _stop_job = None
+    return job
 
 
 @app.post("/stop", response_class=HTMLResponse)
 def stop(request: Request):
+    global _stop_job
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
         return templates.TemplateResponse(request, "_status.html", {"setup_error": str(exc)})
+
+    if _stop_job is not None and _stop_job.running:
+        return templates.TemplateResponse(request, "_status.html", _processing_context(_stop_job))
 
     info = service.get_current_session_status(CONFIG_DIR)
     if info is None:
@@ -276,18 +331,11 @@ def stop(request: Request):
             request, "_status.html", {"recording": False, "error": "no active session."}
         )
 
-    try:
-        note_path = service.stop_session(info, config, CONFIG_DIR)
-    except Exception as exc:
-        return templates.TemplateResponse(
-            request, "_status.html", {**_status_context(config), "error": f"Could not save the recording: {exc}"}
-        )
-
-    if _note_summarization_failed(note_path):
-        success = f"Recording saved as {note_path.name} — summarization failed."
-    else:
-        success = f"Recording saved as {note_path.name}."
-    return templates.TemplateResponse(request, "_status.html", {"recording": False, "success": success})
+    job = StopJob(started_at=datetime.now())
+    job.thread = threading.Thread(target=_run_stop, args=(job, info, config), name="notetaker-stop", daemon=True)
+    _stop_job = job
+    job.thread.start()
+    return templates.TemplateResponse(request, "_status.html", _processing_context(job))
 
 
 @app.post("/cancel", response_class=HTMLResponse)
@@ -351,7 +399,7 @@ def notes_list(
 
 
 @app.get("/notes/{note_id}", response_class=HTMLResponse)
-def notes_detail(request: Request, note_id: str):
+def notes_detail(request: Request, note_id: str, saved: str | None = None):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
@@ -363,11 +411,13 @@ def notes_detail(request: Request, note_id: str):
     except Exception as exc:
         return templates.TemplateResponse(request, "note_detail.html", {"not_found": str(exc)})
 
-    return templates.TemplateResponse(
-        request,
-        "note_detail.html",
-        {"detail": detail, "full_markdown": full_markdown, "rows": parse_transcript_rows(detail.transcript)},
-    )
+    context = {"detail": detail, "full_markdown": full_markdown, "rows": parse_transcript_rows(detail.transcript)}
+    if saved:  # just arrived here from the Record page's stop flow
+        if "Summarization failed:" in detail.summary_text:
+            context["warning"] = "Recording saved, but summarization failed — the transcript is intact. Try Resummarize."
+        else:
+            context["success"] = "Recording saved."
+    return templates.TemplateResponse(request, "note_detail.html", context)
 
 
 @app.get("/notes/{note_id}/edit", response_class=HTMLResponse)

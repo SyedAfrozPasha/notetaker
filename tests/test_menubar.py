@@ -46,13 +46,26 @@ def test_format_elapsed_over_an_hour():
 
 
 def test_menu_bar_title_idle():
-    assert menu_bar_title(None, datetime(2026, 9, 16, 10, 0, 0)) == "Notetaker"
+    # Icon only when idle — no text in the strip.
+    assert menu_bar_title(None, datetime(2026, 9, 16, 10, 0, 0)) is None
 
 
 def test_menu_bar_title_recording():
     info = SessionInfo(123, "Standup", datetime(2026, 9, 16, 10, 0, 0), Path("/tmp"))
     now = datetime(2026, 9, 16, 10, 5, 23)
-    assert menu_bar_title(info, now) == "⏺ 05:23"
+    assert menu_bar_title(info, now) == "05:23"
+
+
+def test_menu_bar_icon_switches_between_idle_ring_and_recording_dot(tmp_path):
+    from pathlib import Path
+
+    from notetaker.menubar import ICON_IDLE, ICON_RECORDING, POLL_INTERVAL_SECONDS, menu_bar_icon
+
+    info = service.SessionInfo(1, "Standup", datetime(2026, 9, 16, 10, 0, 0), tmp_path)
+    assert menu_bar_icon(None) == ICON_IDLE
+    assert menu_bar_icon(info) == ICON_RECORDING
+    assert Path(ICON_IDLE).is_file() and Path(ICON_RECORDING).is_file()
+    assert POLL_INTERVAL_SECONDS == 1  # the strip's timer must advance every second
 
 
 def test_toggle_item_title_idle():
@@ -113,8 +126,27 @@ def test_on_tick_updates_title_when_idle(app, monkeypatch, tmp_path):
 
     app._on_tick(None)
 
-    assert app.title == "Notetaker"
+    from notetaker.menubar import ICON_IDLE
+
+    assert app.title is None
+    assert app.icon == ICON_IDLE
     assert app._toggle_item.title == "Start Recording"
+
+
+def test_on_tick_shows_elapsed_and_recording_icon_while_recording(app, monkeypatch, tmp_path):
+    from notetaker.menubar import ICON_RECORDING
+
+    info = service.SessionInfo(1, "Standup", datetime.now(), tmp_path)
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.menubar.service.check_and_salvage_orphan", lambda config, config_dir: None)
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: info)
+
+    app._on_tick(None)
+
+    assert app.title == "00:00"
+    assert app.icon == ICON_RECORDING
+    assert app._toggle_item.title == "Stop Recording"
 
 
 def test_on_tick_notifies_when_orphan_salvaged(app, monkeypatch, tmp_path):

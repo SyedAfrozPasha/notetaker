@@ -426,7 +426,10 @@ def test_summary_prompt_asks_for_minutes_with_owners():
 
     prompt = SUMMARY_PROMPT_TEMPLATE.format(transcript="x")
     assert "Owner: task" in prompt
-    assert "decisions" in prompt
+    assert "decisions" in prompt.lower()
+    # Small on-device models otherwise echo the transcript, labels and all.
+    assert "own words" in prompt
+    assert "Never copy" in prompt
 
 
 def test_strip_timestamps_also_drops_recorder_status_lines():

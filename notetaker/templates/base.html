@@ -153,7 +153,10 @@
     .live-label { display: inline-flex; align-items: center; gap: .4rem; font-size: .78rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--rec); }
     .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--rec); display: inline-block; box-shadow: 0 0 0 0 color-mix(in srgb, var(--rec) 45%, transparent); animation: pulse 1.6s ease-out infinite; }
     @keyframes pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--rec) 45%, transparent); } 70% { box-shadow: 0 0 0 10px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
-    @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+    .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--border); border-top-color: var(--accent); animation: spin .8s linear infinite; flex: none; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .live-label.muted { color: var(--muted); }
+    @media (prefers-reduced-motion: reduce) { .dot, .spinner { animation: none; } }
     .timer { font-variant-numeric: tabular-nums; font-size: 2rem; font-weight: 600; letter-spacing: -0.02em; line-height: 1; }
     .rec-meta { display: flex; justify-content: space-between; gap: 1rem; margin: .9rem 0 .6rem; color: var(--muted); font-size: .85rem; flex-wrap: wrap; }
 
