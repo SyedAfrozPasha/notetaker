@@ -89,10 +89,11 @@ notetaker show-api-key           # show the masked, currently active key
 
 `notetaker dashboard` runs both UI surfaces in one process: the local web dashboard at
 http://127.0.0.1:8420 and a menu bar item. Start a recording from either and it shows up
-in both — the menu bar icon turns into a record glyph with the elapsed time (`12:34`)
-while recording, its menu has Start/Stop and "Open Dashboard", and the dashboard's
-Record page shows the live transcript as Me/Others rows with a running timer and "last
-transcribed Ns ago", then opens the finished note once Stop & save is done. The dashboard also
+in both — the menu bar logo turns red with the elapsed time (`12:34`) while recording,
+its menu has Start/Stop and "Open Dashboard", and the dashboard's Record page shows the
+live transcript as Me/Others rows with a running timer and "last transcribed Ns ago".
+Stop from either surface: the Record page shows the saving progress and opens the finished
+note; the menu bar shows "Saving…" then notifies. The dashboard also
 browses, edits, deletes and resummarizes saved notes, and edits `config.yaml` plus the
 Claude API key under Settings. It needs no internet (htmx is bundled) and follows the
 system light/dark appearance.

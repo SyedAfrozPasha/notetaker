@@ -4,13 +4,13 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
 
-from faster_whisper import download_model
 from keyring.errors import KeyringError
 
 from notetaker.config import (
@@ -294,6 +294,64 @@ def stop_session(
         raise
 
 
+@dataclass
+class StopJob:
+    """A `stop_session` running on a background thread. Stopping transcribes
+    the last Chunk and summarizes, which can take a minute or more; a UI that
+    calls `stop_session` inline freezes for that long and can show nothing.
+    `begin_stop` starts the job and every UI surface in the process (menu
+    bar, dashboard) reads the same one via `current_stop_job`, so a stop
+    started from one surface shows its progress and outcome on the others.
+    One job at a time — there is only ever one Session to stop."""
+
+    started_at: datetime
+    phase: str = "Stopping recorder..."
+    note_path: Path | None = None
+    error: str | None = None
+    finished_at: datetime | None = None
+    thread: threading.Thread | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def running(self) -> bool:
+        return self.thread is not None and self.thread.is_alive()
+
+
+_stop_job: StopJob | None = None
+_stop_job_lock = threading.Lock()
+
+
+def begin_stop(info: SessionInfo, config: Config, config_dir: Path) -> StopJob:
+    """Starts stopping `info` on a background thread and returns the job;
+    returns the running job unchanged if one is already in progress."""
+    global _stop_job
+    with _stop_job_lock:
+        if _stop_job is not None and _stop_job.running:
+            return _stop_job
+        job = StopJob(started_at=datetime.now())
+
+        def _run() -> None:
+            try:
+                job.note_path = stop_session(
+                    info, config, config_dir, on_phase=lambda phase: setattr(job, "phase", phase)
+                )
+            except Exception as exc:
+                job.error = str(exc)
+            finally:
+                job.finished_at = datetime.now()
+
+        job.thread = threading.Thread(target=_run, name="notetaker-stop", daemon=True)
+        _stop_job = job
+        job.thread.start()
+        return job
+
+
+def current_stop_job() -> StopJob | None:
+    """The most recent stop job (running or finished), or None if none was
+    begun in this process. Consumers remember which finished job they have
+    already reported, so several surfaces can each react once."""
+    return _stop_job
+
+
 def _finalize_stop(
     info: SessionInfo,
     config: Config,
@@ -521,6 +579,14 @@ def check_setup(config: Config) -> SetupStatus:
         problems = check_apple_local_preflight()
         return SetupStatus(blackhole=blackhole, provider_ready=not problems, provider_problems=problems, **audio)
     raise ServiceError(f"Unknown ai_provider '{config.ai_provider}'.")
+
+
+def download_model(*args, **kwargs):
+    """Lazy `faster_whisper.download_model` — see transcriber.WhisperModel for
+    why faster-whisper is not imported at module load."""
+    from faster_whisper import download_model as _download_model
+
+    return _download_model(*args, **kwargs)
 
 
 def whisper_model_is_cached(config: Config) -> bool:

@@ -214,16 +214,17 @@ def status(request: Request):
     except service.ServiceError as exc:
         return templates.TemplateResponse(request, "_status.html", {"setup_error": str(exc)})
 
-    if _stop_job is not None and _stop_job.running:
-        return templates.TemplateResponse(request, "_status.html", _processing_context(_stop_job))
+    running = _running_stop_job()
+    if running is not None:
+        return templates.TemplateResponse(request, "_status.html", _processing_context(running))
     context = {}
-    finished = _finished_stop_job()
-    if finished is not None and finished.note_path is not None:
+    finished = _take_finished_stop_job()
+    if finished is not None and finished.note_path is not None and _finished_recently(finished):
         # htmx follows HX-Redirect on a polled response too: the page that
         # was showing "Processing..." lands on the freshly saved Note.
         return Response(status_code=200, headers={"HX-Redirect": f"/notes/{finished.note_path.stem}?saved=1"})
-    if finished is not None:
-        context["error"] = finished.error
+    if finished is not None and finished.error is not None:
+        context["error"] = f"Could not save the recording: {finished.error}"
 
     try:
         salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
@@ -243,8 +244,9 @@ def start(request: Request, title: str = Form(...), tags: str = Form("")):
     except service.ServiceError as exc:
         return templates.TemplateResponse(request, "_status.html", {"setup_error": str(exc)})
 
-    if _stop_job is not None and _stop_job.running:
-        return templates.TemplateResponse(request, "_status.html", _processing_context(_stop_job))
+    running = _running_stop_job()
+    if running is not None:
+        return templates.TemplateResponse(request, "_status.html", _processing_context(running))
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     context = {}
@@ -267,63 +269,49 @@ def start(request: Request, title: str = Form(...), tags: str = Form("")):
     return templates.TemplateResponse(request, "_status.html", {**_status_context(config), **context})
 
 
-@dataclass
-class StopJob:
-    """`POST /stop` runs `stop_session` on a background thread — transcribing
-    the last chunk and summarizing can take a minute or more, and a request
-    that blocks that long shows the user nothing. The status poll renders
-    the job's current phase while it runs and, once the Note exists, sends
-    the browser to it (HX-Redirect). One job at a time: there is only ever
-    one Session to stop."""
-
-    started_at: datetime
-    phase: str = "Stopping recorder..."
-    note_path: Path | None = None
-    error: str | None = None
-    thread: threading.Thread | None = None
-
-    @property
-    def running(self) -> bool:
-        return self.thread is not None and self.thread.is_alive()
+# Stopping runs as a background `service.StopJob` shared with the menu bar
+# (same process under `notetaker dashboard`): whichever surface pressed Stop,
+# the status poll shows the job's phase while it runs and, once the Note
+# exists, sends the browser to it (HX-Redirect). A finished job is acted on
+# once — `_handled_stop_job` remembers which one — and only if it finished
+# recently, so opening the Record page an hour later doesn't jump to an old note.
+_handled_stop_job: service.StopJob | None = None
+_REDIRECT_WINDOW_SECONDS = 60
 
 
-_stop_job: StopJob | None = None
+def _running_stop_job() -> service.StopJob | None:
+    job = service.current_stop_job()
+    return job if job is not None and job.running else None
 
 
-def _run_stop(job: StopJob, info: service.SessionInfo, config: Config) -> None:
-    try:
-        job.note_path = service.stop_session(
-            info, config, CONFIG_DIR, on_phase=lambda phase: setattr(job, "phase", phase)
-        )
-    except Exception as exc:
-        job.error = f"Could not save the recording: {exc}"
-
-
-def _processing_context(job: StopJob) -> dict:
+def _processing_context(job: service.StopJob) -> dict:
     return {"processing": True, "phase": job.phase, "elapsed": _format_elapsed(job.started_at, datetime.now())}
 
 
-def _finished_stop_job() -> StopJob | None:
-    """Pops the stop job if it has finished (or returns None while it runs
-    or when there is none), so exactly one status poll acts on its result."""
-    global _stop_job
-    job = _stop_job
-    if job is None or job.running:
+def _take_finished_stop_job() -> service.StopJob | None:
+    """The finished stop job this dashboard has not reacted to yet, or None."""
+    global _handled_stop_job
+    job = service.current_stop_job()
+    if job is None or job.running or job is _handled_stop_job:
         return None
-    _stop_job = None
+    _handled_stop_job = job
     return job
+
+
+def _finished_recently(job: service.StopJob) -> bool:
+    return job.finished_at is not None and (datetime.now() - job.finished_at).total_seconds() <= _REDIRECT_WINDOW_SECONDS
 
 
 @app.post("/stop", response_class=HTMLResponse)
 def stop(request: Request):
-    global _stop_job
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
         return templates.TemplateResponse(request, "_status.html", {"setup_error": str(exc)})
 
-    if _stop_job is not None and _stop_job.running:
-        return templates.TemplateResponse(request, "_status.html", _processing_context(_stop_job))
+    running = _running_stop_job()
+    if running is not None:
+        return templates.TemplateResponse(request, "_status.html", _processing_context(running))
 
     info = service.get_current_session_status(CONFIG_DIR)
     if info is None:
@@ -331,10 +319,7 @@ def stop(request: Request):
             request, "_status.html", {"recording": False, "error": "no active session."}
         )
 
-    job = StopJob(started_at=datetime.now())
-    job.thread = threading.Thread(target=_run_stop, args=(job, info, config), name="notetaker-stop", daemon=True)
-    _stop_job = job
-    job.thread.start()
+    job = service.begin_stop(info, config, CONFIG_DIR)
     return templates.TemplateResponse(request, "_status.html", _processing_context(job))
 
 

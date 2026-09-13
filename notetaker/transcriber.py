@@ -4,7 +4,16 @@ import wave
 from pathlib import Path
 
 import numpy as np
-from faster_whisper import WhisperModel
+
+
+def WhisperModel(*args, **kwargs):  # noqa: N802 — keeps the class name as the (patchable) entry point
+    """Lazy `faster_whisper.WhisperModel`: importing faster-whisper pulls in
+    ctranslate2 and av, which takes seconds on a cold start, and only the
+    Recorder process and `notetaker init` ever load a model."""
+    from faster_whisper import WhisperModel as _WhisperModel
+
+    return _WhisperModel(*args, **kwargs)
+
 
 # Channel layout of a stereo chunk written by `recorder.LiveCapture`.
 ME_CHANNEL = 0  # your microphone

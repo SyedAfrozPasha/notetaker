@@ -244,16 +244,29 @@ def test_on_toggle_shows_alert_when_start_raises_unexpected_error(app, monkeypat
     assert "disk full" in calls[0][1]
 
 
+def _finish_stop_job():
+    """Joins the background stop thread so the next tick sees its result."""
+    job = service.current_stop_job()
+    assert job is not None, "expected _on_toggle to have begun a stop job"
+    job.thread.join(timeout=5)
+
+
+def _wire_stop(monkeypatch, tmp_path, info):
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.menubar.service.check_and_salvage_orphan", lambda config, config_dir: None)
+    state = {"info": info}
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: state["info"])
+    return state
+
+
 def test_on_toggle_shows_alert_when_stop_fails(app, monkeypatch, tmp_path):
     from datetime import datetime
 
     info = service.SessionInfo(123, "Standup", datetime(2026, 9, 16, 10, 0, 0), tmp_path)
+    _wire_stop(monkeypatch, tmp_path, info)
 
-    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
-    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: info)
-
-    def fail(info, config, config_dir):
+    def fail(info, config, config_dir, on_phase=None):
         raise RuntimeError("disk full")
 
     monkeypatch.setattr("notetaker.menubar.service.stop_session", fail)
@@ -263,36 +276,60 @@ def test_on_toggle_shows_alert_when_stop_fails(app, monkeypatch, tmp_path):
     )
 
     app._on_toggle(None)
+    _finish_stop_job()
+    app._on_tick(None)
 
     assert len(calls) == 1
     assert calls[0][0] == "Could not save the recording"
     assert "disk full" in calls[0][1]
+    app._on_tick(None)
+    assert len(calls) == 1  # reported once, not on every tick
 
 
-def test_on_toggle_stops_and_notifies_when_recording(app, monkeypatch, tmp_path):
+def test_on_toggle_stops_in_the_background_shows_saving_then_notifies(app, monkeypatch, tmp_path):
+    import threading
     from datetime import datetime
+
+    from notetaker.menubar import ICON_IDLE, SAVING_TITLE
 
     info = service.SessionInfo(123, "Standup", datetime(2026, 9, 16, 10, 0, 0), tmp_path)
     note_path = tmp_path / "notes" / "2026-09-16-standup.md"
     note_path.parent.mkdir(parents=True)
     note_path.write_text("## Summary\nAll good.\n")
+    state = _wire_stop(monkeypatch, tmp_path, info)
+    release = threading.Event()
 
-    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
-    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: info)
-    monkeypatch.setattr(
-        "notetaker.menubar.service.stop_session", lambda info, config, config_dir: note_path
-    )
+    def slow_stop(info, config, config_dir, on_phase=None):
+        state["info"] = None
+        on_phase("Summarizing...")
+        release.wait(timeout=5)
+        return note_path
+
+    monkeypatch.setattr("notetaker.menubar.service.stop_session", slow_stop)
     calls = []
     monkeypatch.setattr(
         "notetaker.menubar.rumps.notification",
         lambda title, subtitle, message: calls.append((title, subtitle, message)),
     )
 
-    app._on_toggle(None)
+    app._on_toggle(None)  # returns immediately; the menu bar must not freeze while summarizing
 
-    assert len(calls) == 1
-    assert calls[0] == ("Recording saved", "", "2026-09-16-standup.md")
+    app._on_tick(None)
+    assert app.title == SAVING_TITLE
+    assert app._toggle_item.title == SAVING_TITLE
+    assert app.icon == ICON_IDLE
+    assert calls == []
+
+    app._on_toggle(None)  # a second click while saving must not start a new recording
+    assert calls[-1][0] == "Still saving the previous recording"
+
+    release.set()
+    _finish_stop_job()
+    app._on_tick(None)
+
+    assert calls[-1] == ("Recording saved", "", "2026-09-16-standup.md")
+    assert app.title is None
+    assert app._toggle_item.title == "Start Recording"
 
 
 def test_on_toggle_notifies_summarization_failure_variant(app, monkeypatch, tmp_path):
@@ -302,12 +339,9 @@ def test_on_toggle_notifies_summarization_failure_variant(app, monkeypatch, tmp_
     note_path = tmp_path / "notes" / "2026-09-16-standup.md"
     note_path.parent.mkdir(parents=True)
     note_path.write_text("## Summary\nSummarization failed: network down\n")
-
-    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
-    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: info)
+    _wire_stop(monkeypatch, tmp_path, info)
     monkeypatch.setattr(
-        "notetaker.menubar.service.stop_session", lambda info, config, config_dir: note_path
+        "notetaker.menubar.service.stop_session", lambda info, config, config_dir, on_phase=None: note_path
     )
     calls = []
     monkeypatch.setattr(
@@ -316,8 +350,28 @@ def test_on_toggle_notifies_summarization_failure_variant(app, monkeypatch, tmp_
     )
 
     app._on_toggle(None)
+    _finish_stop_job()
+    app._on_tick(None)
 
     assert calls[0][1] == "Summarization failed"
+
+
+def test_recording_icon_is_full_colour_and_idle_icon_is_a_template(app, monkeypatch, tmp_path):
+    from datetime import datetime
+
+    from notetaker.menubar import ICON_IDLE, ICON_RECORDING
+
+    info = service.SessionInfo(1, "Standup", datetime.now(), tmp_path)
+    state = _wire_stop(monkeypatch, tmp_path, info)
+
+    app._on_tick(None)
+    assert app.icon == ICON_RECORDING
+    assert app.template is False
+
+    state["info"] = None
+    app._on_tick(None)
+    assert app.icon == ICON_IDLE
+    assert app.template is True
 
 
 def test_start_salvages_orphan_before_starting(app, monkeypatch, tmp_path):

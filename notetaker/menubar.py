@@ -12,6 +12,7 @@ APP_NAME = "Notetaker"
 # 1s so the elapsed time in the strip advances every second, not in 2s jumps.
 POLL_INTERVAL_SECONDS = 1
 SETUP_WARNING_TITLE = "⚠️"
+SAVING_TITLE = "Saving…"
 
 # Template (black + alpha) PNGs, so macOS tints them for light/dark menu bars.
 ASSETS_DIR = Path(__file__).parent / "assets"
@@ -68,6 +69,7 @@ class NotetakerMenuBarApp(rumps.App):
         if dashboard_url:
             items += [rumps.separator, rumps.MenuItem("Open Dashboard", callback=self._on_open_dashboard)]
         self.menu = items
+        self._reported_stop_job = None  # the finished StopJob already turned into a notification/alert
         self._timer = rumps.Timer(self._on_tick, POLL_INTERVAL_SECONDS)
         self._timer.start()
 
@@ -87,18 +89,48 @@ class NotetakerMenuBarApp(rumps.App):
             salvaged_path = None
         if salvaged_path is not None:
             self._notify("Recovered a crashed session", "Saved as a note", salvaged_path.name)
+        job = service.current_stop_job()
+        if job is not None and job.running:
+            self.title = SAVING_TITLE
+            self._apply_icon(None)
+            self._toggle_item.title = SAVING_TITLE
+            return
+        if job is not None and job is not self._reported_stop_job:
+            self._reported_stop_job = job
+            self._report_stop_result(job)
         info = service.get_current_session_status(CONFIG_DIR)
         self.title = menu_bar_title(info, datetime.now())
-        icon = menu_bar_icon(info)
-        if self.icon != icon:  # setting the icon reloads the image; only do it on a state change
-            self.icon = icon
+        self._apply_icon(info)
         self._toggle_item.title = toggle_item_title(info)
+
+    def _apply_icon(self, info: SessionInfo | None) -> None:
+        icon = menu_bar_icon(info)
+        if self.icon == icon:
+            return  # setting the icon reloads the image; only do it on a state change
+        self.icon = icon
+        # Idle is a template image (macOS tints it); recording is the dashboard's
+        # red logo in full colour, so it reads as "recording" at a glance.
+        template = info is None
+        if self.template != template:
+            self.template = template
+
+    def _report_stop_result(self, job) -> None:
+        if job.error is not None:
+            rumps.alert(title="Could not save the recording", message=job.error)
+        elif job.note_path is not None and note_summarization_failed(job.note_path):
+            self._notify("Recording saved", "Summarization failed", job.note_path.name)
+        elif job.note_path is not None:
+            self._notify("Recording saved", "", job.note_path.name)
 
     def _on_toggle(self, _sender):
         try:
             config = load_config()
         except ConfigError as exc:
             rumps.alert(title="Notetaker is not set up", message=str(exc))
+            return
+        job = service.current_stop_job()
+        if job is not None and job.running:
+            self._notify("Still saving the previous recording", "", job.phase)
             return
         info = service.get_current_session_status(CONFIG_DIR)
         if info is None:
@@ -122,15 +154,11 @@ class NotetakerMenuBarApp(rumps.App):
             self._notify("Recording started with a warning", "Check audio routing", warning)
 
     def _stop(self, config, info):
-        try:
-            note_path = service.stop_session(info, config, CONFIG_DIR)
-        except Exception as exc:
-            rumps.alert(title="Could not save the recording", message=str(exc))
-            return
-        if note_summarization_failed(note_path):
-            self._notify("Recording saved", "Summarization failed", note_path.name)
-        else:
-            self._notify("Recording saved", "", note_path.name)
+        # Non-blocking: the menu bar stays responsive, shows "Saving…" while the
+        # job runs, and the next tick after it finishes reports the outcome.
+        service.begin_stop(info, config, CONFIG_DIR)
+        self.title = SAVING_TITLE
+        self._toggle_item.title = SAVING_TITLE
 
     @staticmethod
     def _notify(title: str, subtitle: str, message: str) -> None:

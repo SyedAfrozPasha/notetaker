@@ -274,11 +274,67 @@ def test_start_shows_error_when_unexpected_exception_raised(client, monkeypatch,
 
 def _wait_for_stop_job():
     """Joins the background stop thread so the next /status poll sees its result."""
-    from notetaker import dashboard
-
-    job = dashboard._stop_job
+    job = service.current_stop_job()
     if job is not None and job.thread is not None:
         job.thread.join(timeout=5)
+
+
+def test_stop_started_from_the_menu_bar_shows_processing_and_opens_the_note_too(client, monkeypatch, tmp_path):
+    """Under `notetaker dashboard` the menu bar and the web UI share one
+    process and one StopJob: a stop pressed in the menu bar shows up on the
+    Record page as processing, then lands on the note, same as a web stop."""
+    import threading
+
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+    note_path = tmp_path / "notes" / "2026-09-11-standup.md"
+    note_path.parent.mkdir(parents=True)
+    note_path.write_text("---\ntitle: Standup\n---\n\n## Summary\nAll good.\n")
+    config = _config(tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: config)
+    monkeypatch.setattr("notetaker.dashboard.service.check_and_salvage_orphan", lambda config, config_dir: None)
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
+    release = threading.Event()
+
+    def slow_stop(info, config, config_dir, on_phase=None):
+        on_phase("Summarizing...")
+        release.wait(timeout=5)
+        return note_path
+
+    monkeypatch.setattr("notetaker.service.stop_session", slow_stop)
+
+    service.begin_stop(info, config, tmp_path)  # what the menu bar's Stop does
+
+    polled = client.get("/status")
+    assert "Processing" in polled.text
+    assert "Summarizing..." in polled.text
+
+    release.set()
+    _wait_for_stop_job()
+    done = client.get("/status")
+    assert done.headers["hx-redirect"] == "/notes/2026-09-11-standup?saved=1"
+
+
+def test_status_does_not_redirect_to_a_note_that_finished_long_ago(client, monkeypatch, tmp_path):
+    from datetime import timedelta
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.check_and_salvage_orphan", lambda config, config_dir: None)
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
+    old = service.StopJob(started_at=datetime.now() - timedelta(minutes=10))
+    old.note_path = tmp_path / "old.md"
+    old.finished_at = datetime.now() - timedelta(minutes=9)
+    monkeypatch.setattr("notetaker.service._stop_job", old)
+
+    response = client.get("/status")
+
+    assert "hx-redirect" not in response.headers
+    assert "Not recording" in response.text
 
 
 def test_stop_shows_processing_with_phases_then_redirects_to_the_saved_note(client, monkeypatch, tmp_path):

@@ -9,7 +9,6 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Protocol
 
-import anthropic
 from keyring.errors import KeyringError
 
 from notetaker.config import Config, ConfigError
@@ -178,7 +177,15 @@ def _parse_summary_json(raw: str) -> dict:
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end <= start:
             raise
-        return json.loads(text[start : end + 1])
+        candidate = text[start : end + 1]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError:
+        # ... and leave trailing commas ("...", ] / "...", }) which strict JSON rejects.
+        return json.loads(_TRAILING_COMMA.sub(r"\1", candidate))
+
+
+_TRAILING_COMMA = re.compile(r",\s*([}\]])")
 
 
 SUMMARY_PROMPT_TEMPLATE = """You are writing the minutes of a meeting (MoM) from a transcript. \
@@ -259,8 +266,10 @@ def _summary_from_data(data: dict) -> Summary:
         if value is None:
             return []
         if isinstance(value, str):
-            return [value]
-        return [str(item) for item in value]
+            value = [value]
+        # The model sometimes bullets list items itself ("- task"); the note adds its own "- [ ]".
+        cleaned = [_LEADING_BULLET.sub("", str(item).strip()) for item in value]
+        return [item for item in cleaned if item]
 
     return Summary(
         text=format_minutes(_text_as_minutes(data["text"])),
@@ -273,6 +282,8 @@ class ClaudeProvider:
     chunk_token_limit = 12000
 
     def __init__(self, api_key: str, model: str):
+        import anthropic  # lazy: the SDK (pydantic, httpx) is slow to import and most commands never need it
+
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
 
@@ -298,6 +309,8 @@ def validate_claude_api_key(api_key: str) -> bool:
     safe default for a "validate before save" flow.
     """
     try:
+        import anthropic  # lazy, see ClaudeProvider
+
         client = anthropic.Anthropic(api_key=api_key)
         client.models.list()
         return True
@@ -322,7 +335,23 @@ class AppleLocalProvider:
         self._base_url = base_url
         self._model = model
 
+    MAX_ATTEMPTS = 3  # the on-device model occasionally emits malformed JSON; sampling again usually fixes it
+
     def summarize(self, transcript: str) -> Summary:
+        last_error: Exception | None = None
+        for _attempt in range(self.MAX_ATTEMPTS):
+            raw = self._complete(transcript)
+            try:
+                return _summary_from_data(_parse_summary_json(raw))
+            except ValueError as exc:  # JSONDecodeError is a ValueError; so is a missing "text" key
+                last_error = exc
+        raise AppleLocalError(
+            f"apfel at {self._base_url} returned malformed summary JSON {self.MAX_ATTEMPTS} times in a row "
+            f"(last error: {last_error})"
+        )
+
+    def _complete(self, transcript: str) -> str:
+        """One chat completion; returns the model's raw message content."""
         payload = {
             "model": self._model,
             "messages": [
@@ -344,8 +373,7 @@ class AppleLocalProvider:
             raise AppleLocalError(f"Could not reach apfel at {self._base_url}: {exc}") from exc
         except ValueError as exc:
             raise AppleLocalError(f"apfel at {self._base_url} returned a non-JSON response: {exc}") from exc
-        raw = data["choices"][0]["message"]["content"]
-        return _summary_from_data(_parse_summary_json(raw))
+        return data["choices"][0]["message"]["content"]
 
 
 def check_apple_local_preflight() -> list[str]:

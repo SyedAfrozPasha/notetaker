@@ -371,9 +371,13 @@ notetaker menubar
 ```
 Don't run `notetaker menubar` alongside `notetaker dashboard` — you'd get two icons.
 
-You'll see a small ring icon in your macOS menu bar when idle; while recording it becomes
-a record glyph (ring with a dot) followed by the elapsed time, **MM:SS**, ticking every
-second. Click it for a **Start Recording** / **Stop Recording** menu item (recordings
+You'll see the Notetaker logo (a rounded square with a dot, the same mark as the
+dashboard) in your macOS menu bar: monochrome when idle, red while recording, followed by
+the elapsed time, **MM:SS**, ticking every second, and **Saving…** while a stopped
+recording is being transcribed and summarized. Stopping never freezes the menu bar; a
+notification arrives when the note is saved, and the dashboard's Record page (if open)
+shows the same progress and opens the note. Click the icon for a **Start Recording** /
+**Stop Recording** menu item (recordings
 started this way get an auto-generated title like "Meeting 2026-09-11 09:30"), an
 **Open Dashboard** item (when run via `notetaker dashboard`), and a **Quit** item.
 

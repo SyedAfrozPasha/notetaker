@@ -97,7 +97,7 @@ def test_claude_provider_parses_json_response(monkeypatch):
         MagicMock(type="text", text=json.dumps({"text": "summary", "action_items": ["do x"], "tags": ["standup"]}))
     ]
     fake_client.messages.create.return_value = fake_response
-    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", lambda api_key: fake_client)
+    monkeypatch.setattr("anthropic.Anthropic", lambda api_key: fake_client)
 
     provider = ClaudeProvider(api_key="fake-key", model="claude-sonnet-5")
     result = provider.summarize("[00:00:01] hello")
@@ -115,7 +115,7 @@ def test_claude_provider_parses_json_response_wrapped_in_markdown_fences(monkeyp
     fenced = "```json\n" + json.dumps({"text": "summary", "action_items": ["do x"], "tags": ["standup"]}) + "\n```"
     fake_response.content = [MagicMock(type="text", text=fenced)]
     fake_client.messages.create.return_value = fake_response
-    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", lambda api_key: fake_client)
+    monkeypatch.setattr("anthropic.Anthropic", lambda api_key: fake_client)
 
     provider = ClaudeProvider(api_key="fake-key", model="claude-sonnet-5")
     result = provider.summarize("[00:00:01] hello")
@@ -324,7 +324,7 @@ def test_validate_claude_api_key_returns_true_when_call_succeeds(monkeypatch):
         def __init__(self, api_key):
             self.models = FakeModels()
 
-    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", FakeClient)
+    monkeypatch.setattr("anthropic.Anthropic", FakeClient)
     assert validate_claude_api_key("sk-ant-real-key") is True
 
 
@@ -337,7 +337,7 @@ def test_validate_claude_api_key_returns_false_when_call_raises(monkeypatch):
         def __init__(self, api_key):
             self.models = FakeModels()
 
-    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", FakeClient)
+    monkeypatch.setattr("anthropic.Anthropic", FakeClient)
     assert validate_claude_api_key("sk-ant-bad-key") is False
 
 
@@ -351,7 +351,7 @@ def test_claude_provider_skips_thinking_blocks(monkeypatch):
         MagicMock(type="text", text=json.dumps({"text": "summary", "action_items": None, "tags": "solo"})),
     ]
     fake_client.messages.create.return_value = fake_response
-    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", lambda api_key: fake_client)
+    monkeypatch.setattr("anthropic.Anthropic", lambda api_key: fake_client)
 
     result = ClaudeProvider(api_key="k", model="claude-sonnet-5").summarize("hi")
 
@@ -366,7 +366,7 @@ def test_claude_provider_raises_when_cut_off_at_max_tokens(monkeypatch):
     fake_response.stop_reason = "max_tokens"
     fake_response.content = [MagicMock(type="text", text='{"text": "trunc')]
     fake_client.messages.create.return_value = fake_response
-    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", lambda api_key: fake_client)
+    monkeypatch.setattr("anthropic.Anthropic", lambda api_key: fake_client)
 
     with pytest.raises(ValueError, match="max_tokens"):
         ClaudeProvider(api_key="k", model="claude-sonnet-5").summarize("hi")
