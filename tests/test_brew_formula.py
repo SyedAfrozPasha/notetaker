@@ -21,16 +21,6 @@ def test_generate_formula_dashboard_has_correct_service_block(tmp_path):
     assert "keep_alive true" in formula
 
 
-def test_generate_formula_menubar_has_correct_service_block(tmp_path):
-    from notetaker.brew_formula import generate_formula
-
-    formula = generate_formula("menubar", tmp_path, "0.1.0")
-
-    assert "class NotetakerMenubar < Formula" in formula
-    assert f'run ["{tmp_path}/.venv/bin/notetaker", "menubar"]' in formula
-    assert 'log_path var/"log/notetaker-menubar.log"' in formula
-
-
 def test_generate_formula_rejects_unknown_service(tmp_path):
     from notetaker.brew_formula import generate_formula
 
@@ -38,16 +28,24 @@ def test_generate_formula_rejects_unknown_service(tmp_path):
         generate_formula("bogus", tmp_path, "0.1.0")
 
 
-def test_write_formulas_creates_both_files_with_given_version(tmp_path):
+def test_generate_formula_no_longer_offers_a_separate_menubar_service(tmp_path):
+    """The menu bar lives inside the `notetaker dashboard` process now; a
+    second `brew services` entry would put two icons in the menu bar."""
+    from notetaker.brew_formula import generate_formula
+
+    with pytest.raises(KeyError):
+        generate_formula("menubar", tmp_path, "0.1.0")
+
+
+def test_write_formulas_creates_only_the_dashboard_formula(tmp_path):
     from notetaker.brew_formula import write_formulas
 
     written = write_formulas(tmp_path, version="9.9.9")
 
-    assert len(written) == 2
+    assert written == [tmp_path / "Formula" / "notetaker-dashboard.rb"]
     dashboard = (tmp_path / "Formula" / "notetaker-dashboard.rb").read_text()
-    menubar = (tmp_path / "Formula" / "notetaker-menubar.rb").read_text()
     assert 'version "9.9.9"' in dashboard
-    assert 'version "9.9.9"' in menubar
+    assert not (tmp_path / "Formula" / "notetaker-menubar.rb").exists()
 
 
 def test_write_formulas_reads_version_from_pyproject_when_not_given(tmp_path):

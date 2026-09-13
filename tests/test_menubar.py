@@ -307,3 +307,21 @@ def test_start_salvages_orphan_before_starting(app, monkeypatch, tmp_path):
 
     assert order == ["salvage", "start"]
     assert any("old-note.md" in arg for args in notified for arg in args)
+
+
+def test_menu_has_no_dashboard_item_when_run_standalone(app):
+    assert "Open Dashboard" not in app.menu
+
+
+def test_menu_has_open_dashboard_item_when_given_a_url(monkeypatch):
+    instance = NotetakerMenuBarApp(dashboard_url="http://127.0.0.1:8420")
+    try:
+        opened = []
+        monkeypatch.setattr("notetaker.menubar.webbrowser.open", lambda url: opened.append(url))
+
+        assert "Open Dashboard" in instance.menu
+        instance._on_open_dashboard(None)
+
+        assert opened == ["http://127.0.0.1:8420"]
+    finally:
+        instance._timer.stop()

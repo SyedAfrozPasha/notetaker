@@ -190,7 +190,7 @@ def resummarize(note_id: str):
 
 @app.command()
 def menubar():
-    """Launches the menu bar app (blocks until quit)."""
+    """Launches the menu bar app on its own, without the web dashboard (blocks until quit)."""
     from notetaker.menubar import NotetakerMenuBarApp
 
     NotetakerMenuBarApp().run()
@@ -198,9 +198,17 @@ def menubar():
 
 @app.command()
 def dashboard():
-    """Launches the local web dashboard at http://127.0.0.1:8420 (blocks until quit)."""
-    import uvicorn
+    """Launches the local web dashboard at http://127.0.0.1:8420 and the menu bar app,
+    together in one process (blocks until quit)."""
+    from notetaker import dashboard as dashboard_module
+    from notetaker.menubar import NotetakerMenuBarApp
 
-    from notetaker.dashboard import app as dashboard_app
-
-    uvicorn.run(dashboard_app, host="127.0.0.1", port=8420)
+    host, port = dashboard_module.DASHBOARD_HOST, dashboard_module.DASHBOARD_PORT
+    error = dashboard_module.port_in_use_error(host, port)
+    if error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(1)
+    served = dashboard_module.serve_in_background(host, port)
+    # rumps needs the main thread (Cocoa); the web server keeps running on
+    # its daemon thread until Quit or SIGTERM ends the whole process.
+    NotetakerMenuBarApp(dashboard_url=served.url).run()

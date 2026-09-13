@@ -132,11 +132,12 @@ What `install.sh` does:
 - Creates a virtualenv at `.venv/` inside the repo and installs Notetaker and its
   dependencies into it (pinned versions — no ambient/global install).
 - Symlinks the `notetaker` command into `~/.local/bin/notetaker`.
-- Generates two personal Homebrew formula files under `Formula/` for the menu bar app
-  and dashboard (see [Running via `brew services`](#running-the-menu-bar-app--dashboard-permanently-via-brew-services) — optional, skip if you only want the CLI).
-- If you're re-running it after already having `notetaker-dashboard`/`notetaker-menubar`
-  running as `brew services`, it stops them first, rebuilds the virtualenv, and restarts
-  them automatically.
+- Generates one personal Homebrew formula file under `Formula/` for the dashboard + menu
+  bar process (see [Running via `brew services`](#running-the-menu-bar-app--dashboard-permanently-via-brew-services) — optional, skip if you only want the CLI).
+- If you're re-running it after already having `notetaker-dashboard` running as a
+  `brew services` service, it stops it first, rebuilds the virtualenv, and restarts it
+  automatically. If it finds the older, separate `notetaker-menubar` service, it stops
+  and uninstalls that one (the menu bar is part of the dashboard process now).
 
 Make sure `~/.local/bin` is on your `PATH`. If `notetaker` isn't found after installing,
 add this to your `~/.zshrc` (the default macOS shell) and open a new terminal tab:
@@ -280,8 +281,8 @@ notetaker show 2026-09-11-team-standup            # print one note's full Markdo
 notetaker resummarize 2026-09-11-team-standup     # redo the summary from the saved transcript
 notetaker set-api-key                             # store/replace your Claude API key
 notetaker show-api-key                            # show the masked, currently active key
-notetaker dashboard                               # local web UI at http://127.0.0.1:8420 (see "Web dashboard")
-notetaker menubar                                 # menu bar app with one-click start/stop (see "Menu bar app")
+notetaker dashboard                               # web UI at http://127.0.0.1:8420 + menu bar item (see "Web dashboard")
+notetaker menubar                                 # menu bar item only, no web UI (see "Menu bar app")
 ```
 
 A typical session:
@@ -357,20 +358,24 @@ record. Fix the underlying issue, then run `notetaker resummarize <note-id>`.
 
 ## Menu bar app
 
-An optional `rumps`-based menu bar app gives you one-click start/stop without opening a
-terminal, a live elapsed-time display in the menu bar, and native notifications when a
-recording saves, when summarization fails, or when a crash is detected and salvaged.
+A `rumps`-based menu bar item gives you one-click start/stop without opening a terminal,
+a live elapsed-time display in the menu bar, and native notifications when a recording
+saves, when summarization fails, or when a crash is detected and salvaged.
 
-Run it directly (blocks the terminal it's run from — use this to try it out, or use
-`brew services` below to run it permanently in the background):
+It is part of `notetaker dashboard` (see [Web dashboard](#web-dashboard)): whenever the
+dashboard is running, the menu bar item is there too, and a recording started from the
+browser shows up in it within two seconds. To run the menu bar item **on its own**,
+without the web UI (blocks the terminal it's run from):
 ```bash
 notetaker menubar
 ```
+Don't run `notetaker menubar` alongside `notetaker dashboard` — you'd get two icons.
 
 You'll see a small icon in your macOS menu bar showing either **Notetaker** (idle) or
 **⏺ MM:SS** (recording, live-updating). Click it for a **Start Recording** / **Stop
 Recording** menu item (recordings started this way get an auto-generated title like
-"Meeting 2026-09-11 09:30") and a **Quit** item.
+"Meeting 2026-09-11 09:30"), an **Open Dashboard** item (when run via
+`notetaker dashboard`), and a **Quit** item.
 
 ---
 
@@ -379,20 +384,28 @@ Recording** menu item (recordings started this way get an auto-generated title l
 A local-only web UI (bound to `127.0.0.1` — never reachable from other devices on your
 network) at **http://127.0.0.1:8420**, for starting/stopping recordings from a browser
 and for browsing, searching, editing, deleting, and resummarizing past notes, plus a
-Settings page.
+Settings page. It needs no internet connection (htmx is bundled) and follows your
+system's light/dark appearance.
 
 Run it directly:
 ```bash
 notetaker dashboard
 ```
-Then open http://127.0.0.1:8420 in your browser.
+This one process serves the web UI **and** puts the menu bar item up (see
+[Menu bar app](#menu-bar-app)); use the menu bar's **Open Dashboard** item or open
+http://127.0.0.1:8420 in your browser. If port 8420 is already taken (usually a second
+`notetaker dashboard`), the command exits with an error instead of starting.
 
 What it offers:
-- **Home page** — live status (recording/idle, elapsed time, transcript preview so far),
-  **Start**/**Stop**/**Cancel** buttons. Unlike the CLI, **Cancel** is available here —
-  it discards an in-progress session with no note produced. The page polls its own
-  status every 2 seconds, and — like the menu bar app — this is also when it checks for
-  and salvages any crashed session.
+- **Record page** — live status: a pulsing timer with the meeting title and tags, the
+  transcript so far as **Me** / **Others** rows (recorder notices such as "no meeting
+  audio detected" appear inline in amber), a segment count and "last transcribed Ns ago"
+  so you can tell audio is flowing, and **Stop & save** / **Cancel** buttons. The
+  transcript pane follows the newest line unless you scroll up to re-read. Unlike the
+  CLI, **Cancel** is available here — it discards an in-progress session with no note
+  produced. Audio-routing warnings from start stay on screen for the whole session. The
+  page polls its own status every 2 seconds, and — like the menu bar app — this is also
+  when it checks for and salvages any crashed session.
 - **Notes** (`/notes`) — browse and search all saved notes by text, tag, or date range.
 - **Note detail** (`/notes/<id>`) — full note view with copy buttons, an **Edit** page
   (title, tags, summary text, action items), **Delete**, and **Resummarize**.
@@ -407,46 +420,43 @@ What it offers:
 
 ## Running the menu bar app / dashboard permanently via `brew services`
 
-Running `notetaker menubar`/`notetaker dashboard` directly is fine for trying them out,
-but it ties up a terminal tab and won't restart itself if it crashes or after a reboot.
-`install.sh` already generated two **personal, unpublished** Homebrew formulas
-(`Formula/notetaker-dashboard.rb`, `Formula/notetaker-menubar.rb`) that wrap the same
-`.venv/bin/notetaker <subcommand>` — they build nothing of their own, they just let
-`brew services` supervise these two long-running processes the way it would any other
-background service (see `docs/adr/0003-brew-services-for-ui-processes-no-app-packaging.md`
-for the reasoning — this approach was chosen specifically to avoid `.app` packaging or
-hand-rolled `launchd` plists).
+Running `notetaker dashboard` directly is fine for trying it out, but it ties up a
+terminal tab and won't restart itself if it crashes or after a reboot. `install.sh`
+already generated one **personal, unpublished** Homebrew formula
+(`Formula/notetaker-dashboard.rb`) that wraps `.venv/bin/notetaker dashboard` — it
+builds nothing of its own, it just lets `brew services` supervise that one process (web
+dashboard + menu bar item) the way it would any other background service (see
+`docs/adr/0003-brew-services-for-ui-processes-no-app-packaging.md` for the reasoning —
+this approach was chosen specifically to avoid `.app` packaging or hand-rolled `launchd`
+plists, and its amendment for why the menu bar is no longer a second service).
 
 One-time setup:
 ```bash
 # Create a local (unpublished) tap. `brew tap-new` is used deliberately —
-# tapping directly from a path/URL would silently drop the gitignored formula files.
+# tapping directly from a path/URL would silently drop the gitignored formula file.
 brew tap-new syedafrozpasha/notetaker --no-git
 
-# Copy the generated formulas into that tap:
+# Copy the generated formula into that tap:
 cp Formula/*.rb "$(brew --repository syedafrozpasha/notetaker)/Formula/"
 
 brew install syedafrozpasha/notetaker/notetaker-dashboard
-brew install syedafrozpasha/notetaker/notetaker-menubar
 ```
 
 Start/stop/check status:
 ```bash
-brew services start notetaker-dashboard   # now always on at http://127.0.0.1:8420
-brew services start notetaker-menubar     # menu bar icon always present
+brew services start notetaker-dashboard   # always on: http://127.0.0.1:8420 + menu bar item
 
-brew services list                        # check status of both
-brew services stop notetaker-dashboard    # or notetaker-menubar
+brew services list                        # check status
+brew services stop notetaker-dashboard
 ```
 
-**After moving or re-cloning this repo:** the formulas bake in this machine's absolute
-path to the repo, so re-run `./install.sh` (regenerates them), re-copy them into the tap
-(the `cp` step above), then `brew uninstall` + `brew install` again for each service.
+**After moving or re-cloning this repo:** the formula bakes in this machine's absolute
+path to the repo, so re-run `./install.sh` (regenerates it), re-copy it into the tap
+(the `cp` step above), then `brew uninstall` + `brew install` again.
 
-Logs (if a service silently isn't behaving as expected):
+Logs (if the service silently isn't behaving as expected):
 ```bash
 tail -f "$(brew --prefix)/var/log/notetaker-dashboard.log"
-tail -f "$(brew --prefix)/var/log/notetaker-menubar.log"
 ```
 
 ---
@@ -555,8 +565,9 @@ cd notetaker-app
 git pull
 ./install.sh
 ```
-`install.sh` detects and safely restarts any running `notetaker-dashboard`/
-`notetaker-menubar` `brew services` around the virtualenv rebuild. If a recording is
+`install.sh` detects and safely restarts a running `notetaker-dashboard` `brew services`
+service around the virtualenv rebuild (and retires the old separate `notetaker-menubar`
+service if it finds one). If a recording is
 currently in progress, `install.sh` will refuse to run and tell you to `notetaker stop`
 first — it never touches an in-progress session's files.
 
@@ -565,11 +576,9 @@ first — it never touches an in-progress session's files.
 ## Uninstalling
 
 ```bash
-# Stop and remove the background services, if you set them up:
+# Stop and remove the background service, if you set it up:
 brew services stop notetaker-dashboard
-brew services stop notetaker-menubar
 brew uninstall syedafrozpasha/notetaker/notetaker-dashboard
-brew uninstall syedafrozpasha/notetaker/notetaker-menubar
 brew untap syedafrozpasha/notetaker
 
 # Remove the CLI symlink and the repo/venv:

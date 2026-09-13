@@ -3,9 +3,11 @@ from pathlib import Path
 
 GITHUB_URL = "https://github.com/SyedAfrozPasha/notetaker"
 
+# One service only: `notetaker dashboard` runs the web dashboard *and* the
+# menu bar app in a single process. A separate `notetaker-menubar` service
+# (which older installs had) would put a second icon in the menu bar.
 SERVICE_DESCRIPTIONS = {
-    "dashboard": "Notetaker local web dashboard (brew services wrapper — builds nothing itself)",
-    "menubar": "Notetaker menu bar app (brew services wrapper — builds nothing itself)",
+    "dashboard": "Notetaker web dashboard + menu bar app (brew services wrapper — builds nothing itself)",
 }
 
 
@@ -13,8 +15,9 @@ def generate_formula(service: str, repo_dir: Path, version: str) -> str:
     """Returns the Ruby source for a personal Homebrew formula that wraps
     an existing `notetaker` installation (already set up by ./install.sh)
     as a `brew services`-managed background process — this formula never
-    builds or installs any code of its own. `service` is "dashboard" or
-    "menubar", matching the `notetaker <service>` CLI subcommand it runs.
+    builds or installs any code of its own. `service` must be a key of
+    SERVICE_DESCRIPTIONS, matching the `notetaker <service>` CLI subcommand
+    it runs.
     """
     class_name = f"Notetaker{service.capitalize()}"
     desc = SERVICE_DESCRIPTIONS[service]
@@ -60,7 +63,7 @@ def _read_version(repo_dir: Path) -> str:
 
 
 def write_formulas(repo_dir: Path, version: str | None = None) -> list[Path]:
-    """Writes notetaker-dashboard.rb and notetaker-menubar.rb into
+    """Writes one notetaker-<service>.rb per SERVICE_DESCRIPTIONS entry into
     repo_dir/Formula/ (creating that directory if needed). If `version` is
     not given, reads it from repo_dir/pyproject.toml. Returns the list of
     paths written.
@@ -70,7 +73,7 @@ def write_formulas(repo_dir: Path, version: str | None = None) -> list[Path]:
     formula_dir = repo_dir / "Formula"
     formula_dir.mkdir(exist_ok=True)
     written = []
-    for service in ("dashboard", "menubar"):
+    for service in SERVICE_DESCRIPTIONS:
         path = formula_dir / f"notetaker-{service}.rb"
         path.write_text(generate_formula(service, repo_dir, version))
         written.append(path)

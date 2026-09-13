@@ -1,3 +1,4 @@
+import webbrowser
 from datetime import datetime
 from pathlib import Path
 
@@ -45,12 +46,22 @@ def note_summarization_failed(note_path: Path) -> bool:
 
 
 class NotetakerMenuBarApp(rumps.App):
-    def __init__(self):
+    def __init__(self, dashboard_url: str | None = None):
+        """`dashboard_url` is set by `notetaker dashboard`, which serves the
+        web dashboard from a background thread of this same process and adds
+        an "Open Dashboard" item; `notetaker menubar` runs without it."""
         super().__init__(IDLE_TITLE, quit_button="Quit")
+        self._dashboard_url = dashboard_url
         self._toggle_item = rumps.MenuItem("Start Recording", callback=self._on_toggle)
-        self.menu = [self._toggle_item]
+        items = [self._toggle_item]
+        if dashboard_url:
+            items += [rumps.separator, rumps.MenuItem("Open Dashboard", callback=self._on_open_dashboard)]
+        self.menu = items
         self._timer = rumps.Timer(self._on_tick, POLL_INTERVAL_SECONDS)
         self._timer.start()
+
+    def _on_open_dashboard(self, _sender):
+        webbrowser.open(self._dashboard_url)
 
     def _on_tick(self, _timer):
         try:

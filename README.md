@@ -85,38 +85,47 @@ notetaker set-api-key            # store your Claude API key in the macOS Keycha
 notetaker show-api-key           # show the masked, currently active key
 ```
 
-## Menu bar app & dashboard (via `brew services`)
+## Dashboard & menu bar
 
-`./install.sh` also generates two personal Homebrew formulas (`Formula/notetaker-dashboard.rb`,
-`Formula/notetaker-menubar.rb`) — not published anywhere, just local wrappers so `brew services`
-can auto-start and crash-restart these two long-running processes, the same way you'd manage any
-other background service on a Mac where Homebrew is the sanctioned install path. Neither formula
-builds anything; they just point `brew services` at the `.venv/bin/notetaker` that `./install.sh`
-already set up. See `docs/adr/0003-brew-services-for-ui-processes-no-app-packaging.md` for why.
+`notetaker dashboard` runs both UI surfaces in one process: the local web dashboard at
+http://127.0.0.1:8420 and a menu bar item. Start a recording from either and it shows up
+in both — the menu bar shows `⏺ 12:34` while recording, its menu has Start/Stop and
+"Open Dashboard", and the dashboard's Record page shows the live transcript as
+Me/Others rows with a running timer and "last transcribed Ns ago". The dashboard also
+browses, edits, deletes and resummarizes saved notes, and edits `config.yaml` plus the
+Claude API key under Settings. It needs no internet (htmx is bundled) and follows the
+system light/dark appearance.
+
+`notetaker menubar` runs just the menu bar item, without the web server, if you never
+want the browser UI. Don't run it alongside `notetaker dashboard` — you'd get two icons.
+
+To keep it running in the background (auto-start at login, restart on crash), let
+`brew services` manage it. `./install.sh` generates a personal Homebrew formula
+(`Formula/notetaker-dashboard.rb`) — not published anywhere, just a local wrapper that
+points `brew services` at the `.venv/bin/notetaker` that `./install.sh` already set up.
+See `docs/adr/0003-brew-services-for-ui-processes-no-app-packaging.md` for why.
 
 ```bash
 # One-time: create a local (unpublished) tap — brew tap-new avoids the
 # "clone from a path" mechanism, which would silently drop the gitignored
-# formula files below.
+# formula file below.
 brew tap-new syedafrozpasha/notetaker --no-git
 
-# Every time ./install.sh regenerates the formulas (first run, or after
-# moving/re-cloning this repo), copy them into that tap:
+# Every time ./install.sh regenerates the formula (first run, or after
+# moving/re-cloning this repo), copy it into that tap:
 cp Formula/*.rb "$(brew --repository syedafrozpasha/notetaker)/Formula/"
 
 brew install syedafrozpasha/notetaker/notetaker-dashboard
-brew install syedafrozpasha/notetaker/notetaker-menubar
-
-brew services start notetaker-dashboard   # http://127.0.0.1:8420
-brew services start notetaker-menubar
+brew services start notetaker-dashboard   # http://127.0.0.1:8420 + menu bar item
 
 brew services list                        # check status
-brew services stop notetaker-dashboard    # or notetaker-menubar
+brew services stop notetaker-dashboard
 ```
 
-Re-run `./install.sh` any time you move or re-clone this repo — the formulas bake in an absolute
+Re-run `./install.sh` any time you move or re-clone this repo — the formula bakes in an absolute
 path and must be regenerated, then re-copied into the tap (the `cp` step above) and
-`brew uninstall`/`brew install` again, if that path changes.
+`brew uninstall`/`brew install` again, if that path changes. If you set up the older, separate
+`notetaker-menubar` service, `./install.sh` stops and uninstalls it for you.
 
 ## A note on recording consent
 

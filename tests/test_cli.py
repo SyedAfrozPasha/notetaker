@@ -306,21 +306,50 @@ def test_menubar_command_launches_the_app(monkeypatch):
     assert calls == ["constructed", "ran"]
 
 
-def test_dashboard_command_launches_uvicorn_bound_to_localhost(monkeypatch):
+def test_dashboard_command_serves_on_localhost_and_runs_the_menu_bar_in_the_same_process(monkeypatch):
+    """One process: the web server runs on a background thread, the rumps
+    menu bar app owns the main thread — so a recording started from the
+    browser is always visible in the menu bar too."""
     calls = {}
 
-    def fake_run(app, host, port):
-        calls["app"] = app
-        calls["host"] = host
-        calls["port"] = port
+    class FakeHandle:
+        url = "http://127.0.0.1:8420"
 
-    monkeypatch.setattr("uvicorn.run", fake_run)
+    def fake_serve(host, port):
+        calls["serve"] = (host, port)
+        return FakeHandle()
+
+    class FakeApp:
+        def __init__(self, dashboard_url=None):
+            calls["dashboard_url"] = dashboard_url
+
+        def run(self):
+            calls["ran"] = True
+
+    monkeypatch.setattr("notetaker.dashboard.port_in_use_error", lambda host, port: None)
+    monkeypatch.setattr("notetaker.dashboard.serve_in_background", fake_serve)
+    monkeypatch.setattr("notetaker.menubar.NotetakerMenuBarApp", FakeApp)
 
     result = runner.invoke(app, ["dashboard"])
 
     assert result.exit_code == 0
-    assert calls["host"] == "127.0.0.1"
-    assert calls["port"] == 8420
-    from notetaker.dashboard import app as dashboard_app
+    assert calls["serve"] == ("127.0.0.1", 8420)
+    assert calls["dashboard_url"] == "http://127.0.0.1:8420"
+    assert calls["ran"] is True
 
-    assert calls["app"] is dashboard_app
+
+def test_dashboard_command_exits_before_showing_the_menu_bar_when_the_port_is_taken(monkeypatch):
+    monkeypatch.setattr(
+        "notetaker.dashboard.port_in_use_error", lambda host, port: f"cannot bind to http://{host}:{port}"
+    )
+    monkeypatch.setattr(
+        "notetaker.dashboard.serve_in_background", lambda host, port: pytest.fail("must not serve")
+    )
+    monkeypatch.setattr(
+        "notetaker.menubar.NotetakerMenuBarApp", lambda dashboard_url=None: pytest.fail("must not show")
+    )
+
+    result = runner.invoke(app, ["dashboard"])
+
+    assert result.exit_code == 1
+    assert "cannot bind to http://127.0.0.1:8420" in result.output

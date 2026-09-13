@@ -40,12 +40,11 @@ fi
 
 if [ -d "$VENV_DIR" ]; then
   echo "Existing virtualenv found at $VENV_DIR, recreating it..."
-  # The dashboard/menubar services run out of this venv; stop any that are
-  # running so they don't crash-loop while it is rebuilt, and restart them
-  # at the end.
+  # The dashboard service runs out of this venv; stop it if it is running so
+  # it doesn't crash-loop while the venv is rebuilt, and restart it at the end.
   RESTART_SERVICES=""
   if command -v brew >/dev/null 2>&1; then
-    for svc in notetaker-dashboard notetaker-menubar; do
+    for svc in notetaker-dashboard; do
       if brew services list 2>/dev/null | grep -E "^$svc\s+(started|scheduled|error)" >/dev/null; then
         echo "Stopping $svc while the virtualenv is rebuilt..."
         brew services stop "$svc" >/dev/null 2>&1 || true
@@ -56,6 +55,16 @@ if [ -d "$VENV_DIR" ]; then
   rm -rf "$VENV_DIR"
 fi
 
+# Older installs ran the menu bar as its own `notetaker-menubar` service. The
+# menu bar now lives inside the `notetaker dashboard` process, so a leftover
+# menubar service would put a second icon in the menu bar — retire it.
+if command -v brew >/dev/null 2>&1 && brew services list 2>/dev/null | grep -E "^notetaker-menubar\s" >/dev/null; then
+  echo "Retiring the old notetaker-menubar service (the menu bar is part of notetaker-dashboard now)..."
+  brew services stop notetaker-menubar >/dev/null 2>&1 || true
+  brew uninstall notetaker-menubar >/dev/null 2>&1 || true
+fi
+rm -f "$REPO_DIR/Formula/notetaker-menubar.rb"
+
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --upgrade pip
 "$VENV_DIR/bin/pip" install -e "$REPO_DIR[dev]"   # [dev] = pytest, so the documented test suite works from a fresh install
@@ -65,7 +74,7 @@ mkdir -p "$BIN_DIR"
 ln -sf "$VENV_DIR/bin/notetaker" "$BIN_DIR/notetaker"
 
 echo ""
-echo "Generating personal Homebrew formulas for 'brew services' (dashboard + menu bar)..."
+echo "Generating the personal Homebrew formula for 'brew services' (dashboard + menu bar, one process)..."
 "$VENV_DIR/bin/python" -m notetaker.brew_formula
 
 for svc in ${RESTART_SERVICES:-}; do
