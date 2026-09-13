@@ -157,3 +157,13 @@ def menubar():
     from notetaker.menubar import NotetakerMenuBarApp
 
     NotetakerMenuBarApp().run()
+
+
+@app.command()
+def dashboard():
+    """Launches the local web dashboard at http://127.0.0.1:8420 (blocks until quit)."""
+    import uvicorn
+
+    from notetaker.dashboard import app as dashboard_app
+
+    uvicorn.run(dashboard_app, host="127.0.0.1", port=8420)

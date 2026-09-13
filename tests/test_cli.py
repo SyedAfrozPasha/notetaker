@@ -304,3 +304,23 @@ def test_menubar_command_launches_the_app(monkeypatch):
 
     assert result.exit_code == 0
     assert calls == ["constructed", "ran"]
+
+
+def test_dashboard_command_launches_uvicorn_bound_to_localhost(monkeypatch):
+    calls = {}
+
+    def fake_run(app, host, port):
+        calls["app"] = app
+        calls["host"] = host
+        calls["port"] = port
+
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    result = runner.invoke(app, ["dashboard"])
+
+    assert result.exit_code == 0
+    assert calls["host"] == "127.0.0.1"
+    assert calls["port"] == 8420
+    from notetaker.dashboard import app as dashboard_app
+
+    assert calls["app"] is dashboard_app
