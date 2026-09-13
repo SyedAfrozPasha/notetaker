@@ -29,8 +29,12 @@ def generate_formula(service: str, repo_dir: Path, version: str) -> str:
     # This formula intentionally builds nothing — notetaker itself is
     # installed separately by ./install.sh into its own .venv. This
     # formula exists solely so `brew services` can manage the {service}
-    # process, pointing at that already-existing installation.
-    (prefix/"README").write <<~EOS
+    # process, pointing at that already-existing installation. Named
+    # WRAPPER_INFO (not README) because Homebrew treats a handful of
+    # standard doc filenames as "metadata only" and refuses to consider
+    # a formula that installs nothing but one of those as having
+    # installed anything at all.
+    (prefix/"WRAPPER_INFO").write <<~EOS
       This formula does not install any files of its own.
       See {repo_dir}/install.sh for the real notetaker installation.
     EOS

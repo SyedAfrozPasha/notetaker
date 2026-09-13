@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -72,18 +73,19 @@ def test_write_formulas_creates_formula_directory_if_missing(tmp_path):
 
 @pytest.mark.integration
 def test_generated_formula_is_accepted_by_real_brew(tmp_path):
-    """An end-to-end check that brew actually accepts a generated formula
-    file: installs it into a throwaway local tap, confirms
-    `brew services info` reports the exact command our service block
-    specifies, then fully uninstalls and untaps. Never calls
-    `brew services start` — that registers a real, persistent LaunchAgent,
-    which no automated test should do on its own.
+    """An end-to-end check that brew actually accepts a generated formula:
+    creates a local (non-git) tap with `brew tap-new`, writes a generated
+    formula straight into it, installs it, confirms `brew services info`
+    reports the exact command our service block specifies, then fully
+    uninstalls and untaps. Never calls `brew services start` — that
+    registers a real, persistent LaunchAgent, which no automated test
+    should do on its own.
     """
     brew = shutil.which("brew")
     if brew is None:
         pytest.skip("brew is not installed on this machine")
 
-    from notetaker.brew_formula import write_formulas
+    from notetaker.brew_formula import generate_formula
 
     fake_repo = tmp_path / "fake-repo"
     fake_repo.mkdir()
@@ -94,32 +96,23 @@ def test_generated_formula_is_accepted_by_real_brew(tmp_path):
         "GIT_COMMITTER_NAME": "test",
         "GIT_COMMITTER_EMAIL": "test@example.com",
     }
-    subprocess.run(["git", "init", "-q"], cwd=fake_repo, check=True, env=git_env)
-    subprocess.run(
-        ["git", "commit", "-q", "--allow-empty", "-m", "x"], cwd=fake_repo, check=True, env=git_env
-    )
-    write_formulas(fake_repo, version="0.0.0-test")
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=fake_repo, check=True, env=git_env)
+    (fake_repo / "README.md").write_text("fake repo for the real-brew integration test\n")
     subprocess.run(["git", "add", "-A"], cwd=fake_repo, check=True, env=git_env)
-    subprocess.run(
-        ["git", "commit", "-q", "-m", "add formulas"], cwd=fake_repo, check=True, env=git_env
-    )
+    subprocess.run(["git", "commit", "-q", "-m", "x"], cwd=fake_repo, check=True, env=git_env)
 
     tap_name = f"notetaker-test-{uuid.uuid4().hex[:8]}"
     full_tap = f"local/{tap_name}"
     formula_ref = f"{full_tap}/notetaker-dashboard"
 
     try:
-        tap_result = subprocess.run(
-            ["brew", "tap", full_tap, str(fake_repo)], capture_output=True, text=True
-        )
-        if tap_result.returncode != 0:
-            if "untrusted tap" in tap_result.stderr or "invalid syntax in tap" in tap_result.stderr:
-                pytest.skip(
-                    "this machine's brew requires an explicit `brew trust` for local taps "
-                    "before it will load their formulas; run `brew trust <tap>` yourself to "
-                    "verify manually, or use a brew build without the tap-trust gate"
-                )
-            tap_result.check_returncode()
+        subprocess.run(["brew", "tap-new", full_tap, "--no-git"], check=True)
+        tap_dir = subprocess.run(
+            ["brew", "--repository", full_tap], check=True, capture_output=True, text=True
+        ).stdout.strip()
+        formula_path = Path(tap_dir) / "Formula" / "notetaker-dashboard.rb"
+        formula_path.write_text(generate_formula("dashboard", fake_repo, "0.0.0-test"))
+
         subprocess.run(["brew", "install", formula_ref], check=True)
 
         info = subprocess.run(

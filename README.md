@@ -70,7 +70,15 @@ builds anything; they just point `brew services` at the `.venv/bin/notetaker` th
 already set up. See `docs/adr/0003-brew-services-for-ui-processes-no-app-packaging.md` for why.
 
 ```bash
-brew tap syedafrozpasha/notetaker "$(pwd)"
+# One-time: create a local (unpublished) tap — brew tap-new avoids the
+# "clone from a path" mechanism, which would silently drop the gitignored
+# formula files below.
+brew tap-new syedafrozpasha/notetaker --no-git
+
+# Every time ./install.sh regenerates the formulas (first run, or after
+# moving/re-cloning this repo), copy them into that tap:
+cp Formula/*.rb "$(brew --repository syedafrozpasha/notetaker)/Formula/"
+
 brew install syedafrozpasha/notetaker/notetaker-dashboard
 brew install syedafrozpasha/notetaker/notetaker-menubar
 
@@ -82,7 +90,8 @@ brew services stop notetaker-dashboard    # or notetaker-menubar
 ```
 
 Re-run `./install.sh` any time you move or re-clone this repo — the formulas bake in an absolute
-path and must be regenerated (then `brew uninstall`/`brew install` again) if that path changes.
+path and must be regenerated, then re-copied into the tap (the `cp` step above) and
+`brew uninstall`/`brew install` again, if that path changes.
 
 ## A note on recording consent
 
