@@ -111,9 +111,10 @@ Transcript lines are labelled by source, e.g.
 
 so the minutes can assign action items to the right person ("Me: update the ticket").
 
-**Headphones are recommended.** Without them, your microphone also hears your speakers,
-so what other people say can show up twice — once under `Others:` (from the tap) and
-once, less accurately, under `Me:` (from the mic).
+**Headphones are recommended.** Without them, your microphone also hears your speakers.
+Notetaker drops a `Me:` line when it is a near-duplicate of an `Others:` line from the
+same moment (an echo of the speakers), so most of the doubling is removed automatically —
+but a garbled echo can slip through, and headphones give the cleanest transcript.
 
 ---
 
@@ -593,8 +594,9 @@ brew uninstall blackhole-2ch
 
 **The transcript has only `Me:` lines (or is empty) and ends with a "[warning] no meeting
 audio detected" line.**
-In tap mode this almost always means the **System Audio Recording** permission wasn't
-granted. **System Settings → Privacy & Security → Screen & System Audio Recording** →
+In tap mode the warning appears only after about three minutes of you talking with no
+meeting audio at all, and almost always means the **System Audio Recording** permission
+wasn't granted. **System Settings → Privacy & Security → Screen & System Audio Recording** →
 enable "System Audio Recording Only" for the app you started the recording from
 (Terminal/iTerm2, or the `.venv` Python when started from the menu bar/dashboard). Then
 stop and start the recording again. Also check the meeting app isn't muted. In BlackHole
@@ -612,8 +614,10 @@ transcript gets a "[warning] microphone stopped delivering audio" line — recon
 then stop and start the recording.
 
 **Other people's words appear twice, once as `Me:`.**
-Your microphone is picking up your speakers. Use headphones, or set
-`capture_microphone: false` if you don't need your side recorded.
+Your microphone is picking up your speakers. Notetaker removes most of these echoes
+(a `Me:` line that closely matches an `Others:` line at the same time), but garbled ones
+can slip through. Use headphones, or set `capture_microphone: false` if you don't need
+your side recorded.
 
 **"system_audio: tap requires macOS 14.2+".**
 Older macOS: use the [BlackHole fallback](#fallback-blackhole-loopback-instead-of-the-audio-tap).

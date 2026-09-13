@@ -1,3 +1,5 @@
+import difflib
+import re
 import wave
 from pathlib import Path
 
@@ -8,6 +10,10 @@ from faster_whisper import WhisperModel
 ME_CHANNEL = 0  # your microphone
 OTHERS_CHANNEL = 1  # meeting audio via BlackHole
 SPEAKER_LABELS = {ME_CHANNEL: "Me", OTHERS_CHANNEL: "Others"}
+ECHO_WINDOW_SECONDS = 4.0  # a mic echo of the speakers lands within this of the tapped original
+ECHO_SIMILARITY = 0.6  # difflib ratio above which a Me segment is treated as an echo of an Others one
+ECHO_CONTAINMENT = 0.8  # or: this share of the Me text appears verbatim inside the Others text
+ECHO_MIN_CHARS = 12  # ignore containment for very short fragments ("yes", "okay") — too easy to match
 
 
 def format_timestamp(seconds: float) -> str:
@@ -40,6 +46,47 @@ def read_wav_channels(wav_path: Path) -> list[np.ndarray] | None:
         return [samples]
     samples = samples.reshape(-1, channels)
     return [np.ascontiguousarray(samples[:, i]) for i in range(channels)]
+
+
+def _normalize(text: str) -> str:
+    return re.sub(r"[^a-z0-9 ]+", "", text.lower()).strip()
+
+
+def drop_echoes(spoken: list[tuple[float, str, str]]) -> list[tuple[float, str, str]]:
+    """Removes Me segments that are echoes of Others segments: without
+    headphones the microphone also hears the speakers, so everything the
+    meeting says shows up a second time, slightly garbled, under Me. A Me
+    segment within ECHO_WINDOW_SECONDS of an Others segment whose text is at
+    least ECHO_SIMILARITY similar is dropped. Real overlap (you talking over
+    someone) survives because the words differ.
+    """
+    others = [(start, _normalize(text)) for start, label, text in spoken if label == "Others"]
+    kept = []
+    for start, label, text in spoken:
+        if label == "Me":
+            mine = _normalize(text)
+            echo = any(
+                abs(start - other_start) <= ECHO_WINDOW_SECONDS and _is_echo(mine, other_text)
+                for other_start, other_text in others
+            )
+            if echo:
+                continue
+        kept.append((start, label, text))
+    return kept
+
+
+def _is_echo(mine: str, other: str) -> bool:
+    if not mine or not other:
+        return False
+    matcher = difflib.SequenceMatcher(None, mine, other)
+    if matcher.ratio() >= ECHO_SIMILARITY:
+        return True
+    # A short mic fragment of a long tapped sentence: whole-string similarity
+    # is low, but most of the fragment appears verbatim in the original.
+    if len(mine) >= ECHO_MIN_CHARS:
+        longest = matcher.find_longest_match(0, len(mine), 0, len(other)).size
+        return longest / len(mine) >= ECHO_CONTAINMENT
+    return False
 
 
 class Transcriber:
@@ -89,6 +136,7 @@ class Transcriber:
                 text = seg.text.strip()
                 if text:
                     spoken.append((float(getattr(seg, "start", 0.0)), label, text))
+        spoken = drop_echoes(spoken)
         spoken.sort(key=lambda item: item[0])
 
         lines: list[str] = []

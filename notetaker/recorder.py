@@ -16,7 +16,8 @@ from notetaker.transcriber import ME_CHANNEL, OTHERS_CHANNEL, Transcriber, appen
 
 SAMPLE_RATE = 16000  # what Whisper wants; CoreAudio resamples every device to it
 SILENCE_PEAK = 200  # int16 peak below which a channel is treated as silent
-SILENT_CHUNKS_BEFORE_WARNING = 3
+SILENT_CHUNKS_BEFORE_WARNING = 3  # BlackHole: a Multi-Output Device carries audio from the first second
+SILENT_CHUNKS_BEFORE_WARNING_TAP = 18  # tap: nothing arrives until an app plays, so wait ~3 min before doubting permission
 NO_MEETING_AUDIO_WARNING = (
     "[warning] no meeting audio detected — macOS sound output is probably not the "
     "Multi-Output Device that includes BlackHole. Fix it in System Settings > Sound > Output."
@@ -238,6 +239,7 @@ def run_recorder(
     capture_fn,
     chunk_seconds: int = 10,
     no_meeting_audio_warning: str = NO_MEETING_AUDIO_WARNING,
+    silent_chunks_before_warning: int = SILENT_CHUNKS_BEFORE_WARNING,
 ) -> None:
     """Captures audio continuously on this (main) thread while a single
     worker thread transcribes finished chunks in order. Capture must never
@@ -309,7 +311,7 @@ def run_recorder(
                     silent_meeting_chunks += 1
                 else:
                     silent_meeting_chunks = 0
-                if silent_meeting_chunks >= SILENT_CHUNKS_BEFORE_WARNING:
+                if silent_meeting_chunks >= silent_chunks_before_warning:
                     pending.put(no_meeting_audio_warning)
                     routing_warned = True
             pending.put((chunk_path, elapsed, index))
@@ -352,11 +354,13 @@ def main(argv: list[str]) -> int:
             )
         system_device = portaudio_device_index(tap.device_name)
         warning = NO_MEETING_AUDIO_WARNING_TAP
+        silent_chunks = SILENT_CHUNKS_BEFORE_WARNING_TAP
     else:
         if args.system_device is None:
             raise SystemExit("--system-device is required with --system-audio blackhole")
         system_device = args.system_device
         warning = NO_MEETING_AUDIO_WARNING
+        silent_chunks = SILENT_CHUNKS_BEFORE_WARNING
 
     def _on_stall(source_name: str) -> None:
         if source_name == "microphone":  # meeting audio is legitimately quiet until someone speaks
@@ -374,6 +378,7 @@ def main(argv: list[str]) -> int:
             Transcriber(args.model, model_path=args.model_path or None),
             capture.capture_chunk,
             no_meeting_audio_warning=warning,
+            silent_chunks_before_warning=silent_chunks,
         )
     except BaseException:
         import traceback

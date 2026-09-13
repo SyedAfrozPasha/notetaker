@@ -19,8 +19,9 @@ Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally 
    your headset mic when connected — macOS picks it automatically). Nothing to configure;
    set `capture_microphone: false` in the config to turn it off. Transcript lines are
    labelled `Me:` / `Others:` so the minutes can assign action items to the right person.
-   Without headphones your mic also hears the speakers, so the meeting may appear twice
-   in the transcript (once under each label) — headphones avoid this.
+   Without headphones your mic also hears the speakers; notetaker drops `Me:` lines that
+   are near-duplicates of an `Others:` line at the same moment, but headphones give the
+   cleanest transcript.
 
    <details>
    <summary><b>Fallback: BlackHole loopback (older macOS, or if the tap is blocked by IT)</b></summary>

@@ -62,14 +62,21 @@ def _dedupe_preserve_order(items: list[str]) -> list[str]:
 DEFAULT_CHUNK_TOKEN_LIMIT = 3000
 
 _TIMESTAMP_PREFIX = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] ?", re.MULTILINE)
+# Lines the recorder writes about itself ("[warning] ...", "[note] ...",
+# "[transcription failed for chunk 3: ...]", "[recording stopped due to error: ...]").
+_STATUS_LINE = re.compile(r"^\[(warning|note|transcription failed[^\]]*|recording stopped[^\]]*)\].*$", re.MULTILINE)
 
 
 def strip_timestamps(transcript: str) -> str:
-    """Drops the `[hh:mm:ss] ` prefix from every line. Timestamps are useless
-    to the summarizer and cost ~5 tokens per line — on a 4K-context on-device
-    model that is a large share of the budget.
+    """Drops the `[hh:mm:ss] ` prefix from every line, and drops the
+    recorder's own status lines entirely. Timestamps are useless to the
+    summarizer and cost ~5 tokens per line — on a 4K-context on-device model
+    that is a large share of the budget — and a small model will happily
+    quote "[warning] no meeting audio detected..." into the minutes.
     """
-    return _TIMESTAMP_PREFIX.sub("", transcript)
+    without_status = _STATUS_LINE.sub("", transcript)
+    stripped = _TIMESTAMP_PREFIX.sub("", without_status)
+    return "\n".join(line for line in stripped.splitlines() if line.strip())
 
 
 def summarize_transcript(

@@ -149,6 +149,29 @@ def test_run_recorder_warns_once_when_meeting_channel_stays_silent_but_mic_is_li
     assert transcript.count(NO_MEETING_AUDIO_WARNING) == 1
 
 
+def test_run_recorder_silence_threshold_is_configurable(tmp_path):
+    # Tap mode waits much longer: meeting audio is legitimately absent until an app plays.
+    from notetaker.recorder import NO_MEETING_AUDIO_WARNING_TAP
+
+    session_dir = tmp_path / "session"
+    session_dir.mkdir()
+    call_count = {"n": 0}
+
+    def fake_capture(duration_seconds, out_path):
+        call_count["n"] += 1
+        _write_wav(out_path, me_peak=3000, others_peak=0)
+        if call_count["n"] >= 5:
+            os.kill(os.getpid(), signal.SIGTERM)
+
+    run_recorder(
+        session_dir, transcriber=FakeTranscriber([]), chunk_seconds=1, capture_fn=fake_capture,
+        no_meeting_audio_warning=NO_MEETING_AUDIO_WARNING_TAP, silent_chunks_before_warning=18,
+    )
+
+    transcript_path = session_dir / "transcript.txt"
+    assert not transcript_path.exists() or NO_MEETING_AUDIO_WARNING_TAP not in transcript_path.read_text()
+
+
 def test_run_recorder_does_not_warn_when_meeting_audio_present(tmp_path):
     from notetaker.recorder import NO_MEETING_AUDIO_WARNING
 
@@ -350,7 +373,10 @@ def test_main_tap_mode_creates_tap_resolves_device_and_closes_everything(monkeyp
     captures = []
     monkeypatch.setattr(recorder, "LiveCapture", lambda *a, **k: captures.append(FakeCapture(*a, **k)) or captures[-1])
     monkeypatch.setattr(recorder, "Transcriber", lambda model, model_path=None: events.append(("model", model, model_path)))
-    monkeypatch.setattr(recorder, "run_recorder", lambda *a, **k: events.append(("run", k["no_meeting_audio_warning"])))
+    monkeypatch.setattr(
+        recorder, "run_recorder",
+        lambda *a, **k: events.append(("run", k["no_meeting_audio_warning"], k["silent_chunks_before_warning"])),
+    )
 
     recorder.main([
         "--session-dir", str(tmp_path), "--model", "base.en", "--mic", "default",
@@ -362,7 +388,7 @@ def test_main_tap_mode_creates_tap_resolves_device_and_closes_everything(monkeyp
         ("index", "notetaker-system-audio"),
         ("capture", 4, "default"),
         ("model", "base.en", None),
-        ("run", recorder.NO_MEETING_AUDIO_WARNING_TAP),
+        ("run", recorder.NO_MEETING_AUDIO_WARNING_TAP, recorder.SILENT_CHUNKS_BEFORE_WARNING_TAP),
         "tap.close",  # destroyed before any stream stop, then hard exit (see recorder.main)
         ("hard_exit", 0),
     ]

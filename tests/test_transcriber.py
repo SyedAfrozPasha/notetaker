@@ -105,3 +105,38 @@ def test_transcriber_loads_local_model_dir_without_network(monkeypatch):
     monkeypatch.setattr("notetaker.transcriber.WhisperModel", fake_whisper)
     Transcriber("base.en", model_path="/models/base.en")
     assert calls == {"model": "/models/base.en", "local_files_only": True}
+
+
+def test_drop_echoes_removes_mic_copy_of_meeting_audio_but_keeps_real_speech():
+    from notetaker.transcriber import drop_echoes
+
+    spoken = [
+        (33.0, "Others", "There has been a lot of hype around model context protocol"),
+        (33.4, "Me", "There has been a lot of hype around"),  # speakers heard by the mic
+        (40.0, "Others", "An extremely simple explanation of MCP today."),
+        (40.2, "Me", "extremely simple explanation of MCP today"),
+        (41.0, "Me", "Can you share the slides afterwards?"),  # genuinely me, overlapping
+        (70.0, "Me", "There has been a lot of hype around"),  # same words, far away in time: kept
+        (80.0, "Others", "Shall we move on to the next topic, any objections?"),
+        (80.5, "Me", "Yes"),  # short fragment: never treated as an echo by containment
+    ]
+
+    kept = drop_echoes(spoken)
+
+    assert [(s, l) for s, l, _ in kept] == [
+        (33.0, "Others"), (40.0, "Others"), (41.0, "Me"), (70.0, "Me"), (80.0, "Others"), (80.5, "Me"),
+    ]
+
+
+def test_transcribe_chunk_drops_echo_lines(tmp_path):
+    wav_path = tmp_path / "chunk.wav"
+    _write_stereo_wav(wav_path)
+    model = FakePerChannelModel(
+        me_segments=[(0.5, "There has been a lot of hype around"), (6.0, "good question")],
+        others_segments=[(0.2, "There has been a lot of hype around model context protocol")],
+    )
+    lines = Transcriber("base.en", _model=model).transcribe_chunk(wav_path, elapsed_seconds=0).splitlines()
+    assert lines == [
+        "[00:00:00] Others: There has been a lot of hype around model context protocol",
+        "[00:00:06] Me: good question",
+    ]

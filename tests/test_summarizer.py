@@ -427,3 +427,17 @@ def test_summary_prompt_asks_for_minutes_with_owners():
     prompt = SUMMARY_PROMPT_TEMPLATE.format(transcript="x")
     assert "Owner: task" in prompt
     assert "decisions" in prompt
+
+
+def test_strip_timestamps_also_drops_recorder_status_lines():
+    from notetaker.summarizer import strip_timestamps
+
+    transcript = (
+        "[00:00:02] Me: Hi everyone\n"
+        "[warning] no meeting audio detected — make sure the meeting app is playing sound.\n"
+        "[note] com.microsoft.teams2 is not running — capturing all system audio instead.\n"
+        "[transcription failed for chunk 3: boom]\n"
+        "[00:00:25] Others: hello\n"
+        "[recording stopped due to error: device removed]\n"
+    )
+    assert strip_timestamps(transcript) == "Me: Hi everyone\nOthers: hello"
