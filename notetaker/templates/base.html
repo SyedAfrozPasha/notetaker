@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Notetaker</title>
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.10/dist/htmx.min.js"></script>
+  <style>
+    body { font-family: -apple-system, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    .idle { color: #666; }
+    .recording { color: #c00; font-weight: bold; }
+    .error { color: #c00; border: 1px solid #c00; padding: 0.5rem; border-radius: 4px; }
+    .success { color: #060; border: 1px solid #060; padding: 0.5rem; border-radius: 4px; }
+    textarea { width: 100%; height: 8rem; font-family: monospace; }
+    label { display: block; margin: 0.5rem 0; }
+  </style>
+</head>
+<body>
+  <h1>Notetaker</h1>
+  {% block content %}{% endblock %}
+</body>
+</html>

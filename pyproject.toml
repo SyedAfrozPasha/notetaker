@@ -16,10 +16,14 @@ dependencies = [
     "keyring>=24",
     "rich>=13",
     "rumps>=0.4",
+    "fastapi>=0.115",
+    "jinja2>=3.1",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-mock>=3.14"]
+dev = ["pytest>=8.0", "pytest-mock>=3.14", "httpx>=0.27"]
 
 [project.scripts]
 notetaker = "notetaker.cli:app"

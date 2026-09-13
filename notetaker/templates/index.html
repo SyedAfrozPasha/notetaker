@@ -1,0 +1,6 @@
+{% extends "base.html" %}
+{% block content %}
+<div id="status" hx-get="/status" hx-trigger="load, every 2s" hx-swap="innerHTML">
+  Loading...
+</div>
+{% endblock %}
