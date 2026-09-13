@@ -346,3 +346,26 @@ async def settings_update_config(
         )
 
     return RedirectResponse("/settings", status_code=303)
+
+
+@app.post("/settings/credential", response_class=HTMLResponse)
+async def settings_update_credential(request: Request, api_key: str = Form(...)):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "settings.html", {"setup_error": str(exc)})
+
+    try:
+        service.save_provider_credential(config, api_key)
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request,
+            "settings.html",
+            {
+                "config": config,
+                "masked_credential": service.get_masked_provider_credential(config),
+                "credential_error": str(exc),
+            },
+        )
+
+    return RedirectResponse("/settings", status_code=303)

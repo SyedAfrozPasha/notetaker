@@ -1032,6 +1032,56 @@ def test_settings_update_config_shows_setup_error_when_config_missing(client, mo
     assert "not set up" in response.text
 
 
+def test_settings_update_credential_saves_and_redirects(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    calls = {}
+
+    def fake_save_provider_credential(config, api_key):
+        calls["api_key"] = api_key
+
+    monkeypatch.setattr("notetaker.dashboard.service.save_provider_credential", fake_save_provider_credential)
+
+    response = client.post(
+        "/settings/credential", data={"api_key": "sk-ant-new-key"}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings"
+    assert calls["api_key"] == "sk-ant-new-key"
+
+
+def test_settings_update_credential_shows_error_and_never_echoes_the_submitted_key(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_masked_provider_credential", lambda config: None)
+
+    def fail(config, api_key):
+        raise service.ServiceError("That API key was rejected by Anthropic's API — check it and try again.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.save_provider_credential", fail)
+
+    response = client.post("/settings/credential", data={"api_key": "sk-ant-rejected-key"})
+
+    assert response.status_code == 200
+    assert "rejected by Anthropic" in response.text
+    assert "sk-ant-rejected-key" not in response.text
+
+
+def test_settings_update_credential_shows_setup_error_when_config_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+
+    def fail(path):
+        raise service.ServiceError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", fail)
+
+    response = client.post("/settings/credential", data={"api_key": "sk-ant-x"})
+
+    assert response.status_code == 200
+    assert "not set up" in response.text
+
+
 def test_base_layout_has_settings_nav_link(client):
     response = client.get("/")
 
