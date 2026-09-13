@@ -57,3 +57,20 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         ai_model=raw["ai_model"],
         api_key_env=raw["api_key_env"],
     )
+
+
+UPDATABLE_KEYS = {"notes_dir", "whisper_model", "ai_provider"}
+
+
+def update_config(updates: dict, path: Path = CONFIG_PATH) -> Config:
+    if not path.exists():
+        raise ConfigError(f"No config found at {path}. Run `notetaker init` first.")
+    unknown = set(updates) - UPDATABLE_KEYS
+    if unknown:
+        raise ConfigError(f"Cannot update unsupported config field(s): {', '.join(sorted(unknown))}.")
+    raw = yaml.safe_load(path.read_text()) or {}
+    raw.update(updates)
+    if raw.get("ai_provider") not in VALID_PROVIDERS:
+        raise ConfigError(f"Unknown ai_provider '{raw.get('ai_provider')}' — expected one of {VALID_PROVIDERS}.")
+    path.write_text(yaml.safe_dump(raw, sort_keys=False))
+    return load_config(path)

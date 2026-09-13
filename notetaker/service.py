@@ -12,7 +12,14 @@ from typing import Callable
 
 from keyring.errors import KeyringError
 
-from notetaker.config import Config, write_default_config
+from notetaker.config import (
+    CONFIG_PATH,
+    Config,
+    ConfigError,
+    load_config,
+    update_config as config_update_config,
+    write_default_config,
+)
 from notetaker.credentials import get_provider_credential, mask_credential, set_provider_credential
 from notetaker.notes import (
     NoteMeta,
@@ -384,6 +391,20 @@ class SetupStatus:
 
 def initialize_config(config_path: Path) -> bool:
     return write_default_config(config_path)
+
+
+def get_config(config_path: Path = CONFIG_PATH) -> Config:
+    try:
+        return load_config(config_path)
+    except ConfigError as exc:
+        raise ServiceError(str(exc)) from exc
+
+
+def update_config(config_path: Path, updates: dict) -> Config:
+    try:
+        return config_update_config(updates, config_path)
+    except ConfigError as exc:
+        raise ServiceError(str(exc)) from exc
 
 
 def check_setup(config: Config) -> SetupStatus:

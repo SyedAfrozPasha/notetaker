@@ -1054,3 +1054,45 @@ def test_get_note_detail_raises_for_unparseable_note(tmp_path):
 
     with pytest.raises(ServiceError, match="could not be parsed"):
         get_note_detail(_config(tmp_path), "2026-09-11-standup")
+
+
+def test_get_config_wraps_config_error_as_service_error(tmp_path):
+    from notetaker.service import get_config
+
+    with pytest.raises(ServiceError, match="No config found"):
+        get_config(tmp_path / "missing.yaml")
+
+
+def test_get_config_returns_config_on_success(tmp_path):
+    from notetaker.config import write_default_config
+    from notetaker.service import get_config
+
+    path = tmp_path / "config.yaml"
+    write_default_config(path)
+
+    config = get_config(path)
+
+    assert config.whisper_model == "base.en"
+
+
+def test_service_update_config_wraps_config_error_as_service_error(tmp_path):
+    from notetaker.config import write_default_config
+    from notetaker.service import update_config
+
+    path = tmp_path / "config.yaml"
+    write_default_config(path)
+
+    with pytest.raises(ServiceError, match="Unknown ai_provider"):
+        update_config(path, {"ai_provider": "bogus"})
+
+
+def test_service_update_config_returns_updated_config(tmp_path):
+    from notetaker.config import write_default_config
+    from notetaker.service import update_config
+
+    path = tmp_path / "config.yaml"
+    write_default_config(path)
+
+    config = update_config(path, {"whisper_model": "small"})
+
+    assert config.whisper_model == "small"
