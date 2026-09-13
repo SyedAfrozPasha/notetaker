@@ -58,7 +58,7 @@ fi
 
 "$PYTHON_BIN" -m venv "$VENV_DIR"
 "$VENV_DIR/bin/pip" install --upgrade pip
-"$VENV_DIR/bin/pip" install -e "$REPO_DIR"
+"$VENV_DIR/bin/pip" install -e "$REPO_DIR[dev]"   # [dev] = pytest, so the documented test suite works from a fresh install
 
 BIN_DIR="$HOME/.local/bin"
 mkdir -p "$BIN_DIR"
