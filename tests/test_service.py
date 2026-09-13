@@ -243,7 +243,7 @@ def test_stop_session_dedupes_tags_the_provider_also_produced(monkeypatch, tmp_p
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
     monkeypatch.setattr(
         "notetaker.service.summarize_transcript",
-        lambda transcript, provider: Summary(text="s", action_items=[], tags=["shared-tag", "ai-only"]),
+        lambda transcript, provider: Summary(text="s", action_items=[], tags=["ai-only", "shared-tag"]),
     )
     info = SessionInfo(
         pid=999999, title="Standup", start_time=datetime(2026, 9, 11, 10, 0),
@@ -254,6 +254,9 @@ def test_stop_session_dedupes_tags_the_provider_also_produced(monkeypatch, tmp_p
         info, Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
     )
 
+    # Session tags are merged in FIRST, so "shared-tag" must move to the front
+    # even though the Provider listed it second — this fails without the
+    # merge/de-dup logic (which would leave the Provider's own order intact).
     assert parse_note_meta(note_path).tags == ["shared-tag", "ai-only"]
 
 
