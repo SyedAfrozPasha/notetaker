@@ -82,17 +82,27 @@ def rewrite_note_summary(path: Path, summary: Summary, transcript_lines: list[st
     path.write_text(_render_note_body(meta.title, meta.date, meta.duration_minutes, summary, transcript_lines))
 
 
+_CHECKBOX_ITEM_RE = re.compile(r"^- \[[ xX]\] (.*)$")
+
+
 def parse_action_items(action_items_md: str) -> list[str]:
     """Parses a rendered Action Items Markdown block back into a plain list
     — the inverse of the `"- [ ] {item}"` rendering in `_render`. The
     `"- (none)"` sentinel (written when there are no action items) parses
     back to an empty list.
+
+    Matches both `"- [ ] "` (unchecked, what `_render`/`update_note_fields`
+    write) and `"- [x] "`/`"- [X] "` (checked) — a Note is a plain Markdown
+    file its author may open and check items off in another editor, and
+    this list round-trips straight back through `update_note_fields` on
+    the next edit, so a stricter match here would silently delete any item
+    the user had checked off outside this app.
     """
     items = []
     for line in action_items_md.strip().splitlines():
-        line = line.strip()
-        if line.startswith("- [ ] "):
-            items.append(line[len("- [ ] "):])
+        match = _CHECKBOX_ITEM_RE.match(line.strip())
+        if match:
+            items.append(match.group(1))
     return items
 
 

@@ -16,6 +16,7 @@ api_key_env: ANTHROPIC_API_KEY  # read key from this env var; never stored in th
 
 REQUIRED_KEYS = ["notes_dir", "whisper_model", "ai_provider", "ai_model", "api_key_env"]
 VALID_PROVIDERS = ("claude", "apple_local")
+UPDATABLE_KEYS = {"notes_dir", "whisper_model", "ai_provider"}
 
 
 class ConfigError(Exception):
@@ -50,10 +51,12 @@ def _load_yaml(path: Path) -> dict:
         raise ConfigError(f"Config at {path} is not valid YAML: {exc}") from exc
 
 
-def load_config(path: Path = CONFIG_PATH) -> Config:
-    if not path.exists():
-        raise ConfigError(f"No config found at {path}. Run `notetaker init` first.")
-    raw = _load_yaml(path)
+def _parse_config(raw: dict, path: Path) -> Config:
+    """Validates a raw config dict and builds a Config from it — the shared
+    validation `load_config` and `update_config` both run, so `update_config`
+    can validate a merged dict BEFORE writing it to disk rather than after
+    (a bad value must never be persisted).
+    """
     missing = [key for key in REQUIRED_KEYS if key not in raw]
     if missing:
         raise ConfigError(f"Config at {path} is missing keys: {', '.join(missing)}")
@@ -61,16 +64,23 @@ def load_config(path: Path = CONFIG_PATH) -> Config:
         raise ConfigError(
             f"Unknown ai_provider '{raw['ai_provider']}' — expected one of {VALID_PROVIDERS}."
         )
-    return Config(
-        notes_dir=Path(raw["notes_dir"]).expanduser(),
-        whisper_model=raw["whisper_model"],
-        ai_provider=raw["ai_provider"],
-        ai_model=raw["ai_model"],
-        api_key_env=raw["api_key_env"],
-    )
+    try:
+        return Config(
+            notes_dir=Path(raw["notes_dir"]).expanduser(),
+            whisper_model=raw["whisper_model"],
+            ai_provider=raw["ai_provider"],
+            ai_model=raw["ai_model"],
+            api_key_env=raw["api_key_env"],
+        )
+    except TypeError as exc:
+        raise ConfigError(f"Config at {path} has an invalid value: {exc}") from exc
 
 
-UPDATABLE_KEYS = {"notes_dir", "whisper_model", "ai_provider"}
+def load_config(path: Path = CONFIG_PATH) -> Config:
+    if not path.exists():
+        raise ConfigError(f"No config found at {path}. Run `notetaker init` first.")
+    raw = _load_yaml(path)
+    return _parse_config(raw, path)
 
 
 def update_config(updates: dict, path: Path = CONFIG_PATH) -> Config:
@@ -81,7 +91,6 @@ def update_config(updates: dict, path: Path = CONFIG_PATH) -> Config:
         raise ConfigError(f"Cannot update unsupported config field(s): {', '.join(sorted(unknown))}.")
     raw = _load_yaml(path)
     raw.update(updates)
-    if raw.get("ai_provider") not in VALID_PROVIDERS:
-        raise ConfigError(f"Unknown ai_provider '{raw.get('ai_provider')}' — expected one of {VALID_PROVIDERS}.")
+    config = _parse_config(raw, path)
     path.write_text(yaml.safe_dump(raw, sort_keys=False))
-    return load_config(path)
+    return config

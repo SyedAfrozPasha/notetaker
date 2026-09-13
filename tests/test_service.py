@@ -1093,7 +1093,7 @@ def test_service_update_config_wraps_config_error_as_service_error(tmp_path):
     write_default_config(path)
 
     with pytest.raises(ServiceError, match="Unknown ai_provider"):
-        update_config(path, {"ai_provider": "bogus"})
+        update_config({"ai_provider": "bogus"}, path)
 
 
 def test_service_update_config_returns_updated_config(tmp_path):
@@ -1103,6 +1103,6 @@ def test_service_update_config_returns_updated_config(tmp_path):
     path = tmp_path / "config.yaml"
     write_default_config(path)
 
-    config = update_config(path, {"whisper_model": "small"})
+    config = update_config({"whisper_model": "small"}, path)
 
     assert config.whisper_model == "small"

@@ -89,6 +89,24 @@ def test_update_config_persists_to_disk(tmp_path):
     assert reloaded.ai_provider == "apple_local"
 
 
+def test_update_config_rejects_invalid_value_without_writing_the_file(tmp_path):
+    from notetaker.config import update_config
+
+    path = tmp_path / "config.yaml"
+    original_text = (
+        "notes_dir: ~/notetaker-notes\nwhisper_model: base.en\nai_provider: claude\n"
+        "ai_model: claude-sonnet-5\napi_key_env: ANTHROPIC_API_KEY\n"
+    )
+    path.write_text(original_text)
+
+    with pytest.raises(ConfigError, match="invalid value"):
+        update_config({"notes_dir": None}, path)
+
+    # The bad value must never be persisted — a later load must still succeed.
+    assert path.read_text() == original_text
+    assert load_config(path).notes_dir is not None
+
+
 def test_update_config_rejects_unsupported_field(tmp_path):
     from notetaker.config import update_config
 

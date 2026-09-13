@@ -6,7 +6,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
 
@@ -274,8 +274,8 @@ def search_notes(
     *,
     query: str | None = None,
     tag: str | None = None,
-    start_date=None,
-    end_date=None,
+    start_date: date | None = None,
+    end_date: date | None = None,
 ) -> list[NoteMeta]:
     return notes_search_notes(config.notes_dir, query=query, tag=tag, start_date=start_date, end_date=end_date)
 
@@ -292,8 +292,8 @@ def delete_note(config: Config, note_id: str) -> None:
     if note_path is None:
         raise ServiceError(f"no note found with id '{note_id}'.")
     sidecar_path = note_path.parent / f"{note_path.stem}.transcript.txt"
-    sidecar_path.unlink(missing_ok=True)
     note_path.unlink()
+    sidecar_path.unlink(missing_ok=True)
 
 
 def get_live_transcript_preview(info: SessionInfo) -> str:
@@ -337,6 +337,12 @@ def update_note(
     summary_text: str | None = None,
     action_items: list[str] | None = None,
 ) -> Path:
+    """Edits only the given fields of an existing Note — a parameter left
+    as None is unchanged, so pass `tags=[]` (not None) to clear tags, and
+    likewise `action_items=[]` to clear action items. Never renames the
+    Note (see CONTEXT.md's Note ID definition) and never touches its
+    Transcript section.
+    """
     note_path = find_note_path(config.notes_dir, note_id)
     if note_path is None:
         raise ServiceError(f"no note found with id '{note_id}'.")
@@ -366,9 +372,9 @@ def get_note_detail(config: Config, note_id: str) -> NoteDetail:
         raise ServiceError(f"no note found with id '{note_id}'.")
     try:
         meta = parse_note_meta(note_path)
+        summary_text, action_items, transcript = parse_note_body(note_path)
     except (ValueError, KeyError) as exc:
         raise ServiceError(f"note '{note_id}' could not be parsed: {exc}") from exc
-    summary_text, action_items, transcript = parse_note_body(note_path)
     return NoteDetail(
         note_id=meta.note_id,
         title=meta.title,
@@ -400,7 +406,7 @@ def get_config(config_path: Path = CONFIG_PATH) -> Config:
         raise ServiceError(str(exc)) from exc
 
 
-def update_config(config_path: Path, updates: dict) -> Config:
+def update_config(updates: dict, config_path: Path = CONFIG_PATH) -> Config:
     try:
         return config_update_config(updates, config_path)
     except ConfigError as exc:

@@ -128,6 +128,30 @@ def test_parse_action_items_none_sentinel_is_empty_list():
     assert parse_action_items("- (none)") == []
 
 
+def test_parse_action_items_preserves_checked_off_items():
+    from notetaker.notes import parse_action_items
+
+    assert parse_action_items("- [ ] do A\n- [x] do B\n- [X] do C") == ["do A", "do B", "do C"]
+
+
+def test_update_note_fields_does_not_delete_an_item_checked_off_externally(tmp_path):
+    from notetaker.notes import parse_note_body, update_note_fields
+
+    path = write_note(
+        tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 5,
+        Summary("s", ["do A", "do B"], []), ["hi"],
+    )
+    # Simulate the user checking off "do A" in an external Markdown editor —
+    # get_note_detail/update_note's load->save round trip must not drop it.
+    text = path.read_text()
+    path.write_text(text.replace("- [ ] do A", "- [x] do A"))
+
+    update_note_fields(path, title="Renamed Standup")
+
+    _, action_items, _ = parse_note_body(path)
+    assert action_items == ["do A", "do B"]
+
+
 def test_update_note_fields_changes_only_given_fields(tmp_path):
     from notetaker.notes import update_note_fields
 
