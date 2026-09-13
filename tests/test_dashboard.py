@@ -762,9 +762,13 @@ def test_notes_edit_submit_updates_note_and_redirects(client, monkeypatch, tmp_p
 def test_notes_edit_submit_shows_error_on_failure(client, monkeypatch, tmp_path):
     from notetaker.service import NoteDetail
 
+    # A distinctive summary_text (not the submitted form data) lets the
+    # assertions below prove the re-fetched, still-saved detail was
+    # rendered back into the form — not just an error message on its own,
+    # which would silently lose the user's editing context.
     detail = NoteDetail(
         note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
-        duration_minutes=5, tags=[], summary_text="s", action_items=[], transcript="",
+        duration_minutes=5, tags=[], summary_text="original summary text", action_items=[], transcript="",
         path=tmp_path / "2026-09-11-standup.md",
     )
     monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
@@ -783,3 +787,7 @@ def test_notes_edit_submit_shows_error_on_failure(client, monkeypatch, tmp_path)
 
     assert response.status_code == 200
     assert "disk full" in response.text
+    # The edit form itself must still be usable, pre-filled with the
+    # current (unsaved) detail — proving context wasn't lost on failure.
+    assert 'value="Standup"' in response.text
+    assert "original summary text" in response.text
