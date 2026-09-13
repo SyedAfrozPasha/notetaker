@@ -285,6 +285,63 @@ def test_stop_shows_error_when_stop_session_raises(client, monkeypatch, tmp_path
     assert "Recording" in response.text
 
 
+def test_cancel_discards_session_and_shows_success(client, monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.dashboard.service.cancel_session", lambda info, config_dir: calls.append((info, config_dir))
+    )
+
+    response = client.post("/cancel")
+
+    assert response.status_code == 200
+    assert "Not recording" in response.text
+    assert "cancelled" in response.text.lower()
+    assert len(calls) == 1
+
+
+def test_cancel_shows_error_when_no_active_session(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
+
+    response = client.post("/cancel")
+
+    assert response.status_code == 200
+    assert "no active session" in response.text
+
+
+def test_cancel_shows_error_when_cancel_session_raises(client, monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
+    monkeypatch.setattr("notetaker.dashboard.service.get_live_transcript_preview", lambda info: "")
+
+    def fail(info, config_dir):
+        raise RuntimeError("permission denied")
+
+    monkeypatch.setattr("notetaker.dashboard.service.cancel_session", fail)
+
+    response = client.post("/cancel")
+
+    assert response.status_code == 200
+    assert "permission denied" in response.text
+    assert "Recording" in response.text
+
+
 def test_format_elapsed_under_an_hour():
     from notetaker.dashboard import _format_elapsed
 

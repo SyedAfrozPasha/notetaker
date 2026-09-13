@@ -107,3 +107,28 @@ async def stop(request: Request):
     else:
         success = f"Recording saved as {note_path.name}."
     return templates.TemplateResponse(request, "_status.html", {"recording": False, "success": success})
+
+
+@app.post("/cancel", response_class=HTMLResponse)
+async def cancel(request: Request):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "_status.html", {"setup_error": str(exc)})
+
+    info = service.get_current_session_status(CONFIG_DIR)
+    if info is None:
+        return templates.TemplateResponse(
+            request, "_status.html", {"recording": False, "error": "no active session."}
+        )
+
+    try:
+        service.cancel_session(info, CONFIG_DIR)
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request,
+            "_status.html",
+            {**_status_context(config), "error": f"Could not cancel the recording: {exc}"},
+        )
+
+    return templates.TemplateResponse(request, "_status.html", {"recording": False, "success": "Recording cancelled."})
