@@ -1,0 +1,23 @@
+{% if setup_error %}
+<p class="error">Notetaker is not set up: {{ setup_error }}</p>
+{% elif recording %}
+<p class="recording">&#9679; Recording ({{ elapsed }})</p>
+{% if success %}<p class="success">{{ success }}</p>{% endif %}
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<textarea readonly>{{ transcript }}</textarea>
+<form hx-post="/stop" hx-target="#status" hx-swap="innerHTML">
+  <button type="submit">Stop</button>
+</form>
+<form hx-post="/cancel" hx-target="#status" hx-swap="innerHTML" hx-confirm="Cancel this recording? The transcript will be discarded and no note will be saved.">
+  <button type="submit">Cancel</button>
+</form>
+{% else %}
+<p class="idle">Not recording.</p>
+{% if success %}<p class="success">{{ success }}</p>{% endif %}
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+<form hx-post="/start" hx-target="#status" hx-swap="innerHTML">
+  <label>Title <input type="text" name="title" required></label>
+  <label>Tags (comma-separated) <input type="text" name="tags"></label>
+  <button type="submit">Start Recording</button>
+</form>
+{% endif %}
