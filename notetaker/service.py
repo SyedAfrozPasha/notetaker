@@ -22,6 +22,7 @@ from notetaker.notes import (
     parse_note_meta,
     read_note_body,
     rewrite_note_summary,
+    search_notes as notes_search_notes,
     update_note_fields,
     write_note,
 )
@@ -259,6 +260,17 @@ def cancel_session(info: SessionInfo, config_dir: Path) -> None:
 
 def list_all_notes(config: Config) -> list[NoteMeta]:
     return list_notes(config.notes_dir)
+
+
+def search_notes(
+    config: Config,
+    *,
+    query: str | None = None,
+    tag: str | None = None,
+    start_date=None,
+    end_date=None,
+) -> list[NoteMeta]:
+    return notes_search_notes(config.notes_dir, query=query, tag=tag, start_date=start_date, end_date=end_date)
 
 
 def get_note_body(config: Config, note_id: str) -> str:

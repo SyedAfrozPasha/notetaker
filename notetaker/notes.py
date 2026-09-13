@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import yaml
@@ -178,6 +178,35 @@ def list_notes(notes_dir: Path) -> list[NoteMeta]:
         except (ValueError, KeyError):
             continue
     return sorted(metas, key=lambda m: m.date, reverse=True)
+
+
+def search_notes(
+    notes_dir: Path,
+    *,
+    query: str | None = None,
+    tag: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> list[NoteMeta]:
+    metas = list_notes(notes_dir)
+    if tag is not None:
+        metas = [m for m in metas if tag in m.tags]
+    if start_date is not None:
+        metas = [m for m in metas if m.date.date() >= start_date]
+    if end_date is not None:
+        metas = [m for m in metas if m.date.date() <= end_date]
+    if query is not None:
+        needle = query.lower()
+        matched = []
+        for m in metas:
+            if needle in m.title.lower():
+                matched.append(m)
+                continue
+            summary_text, _, _ = _split_body(read_note_body(m.path))
+            if needle in summary_text.lower():
+                matched.append(m)
+        metas = matched
+    return metas
 
 
 def read_note_body(path: Path) -> str:

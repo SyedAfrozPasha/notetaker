@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from notetaker.notes import (
     find_note_path,
@@ -222,3 +222,70 @@ def test_parse_note_body_empty_transcript_is_empty_string(tmp_path):
     _, _, transcript = parse_note_body(path)
 
     assert transcript == ""
+
+
+def test_search_notes_filters_by_query_in_title(tmp_path):
+    from notetaker.notes import search_notes
+
+    write_note(tmp_path, "Team Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], []), [])
+    write_note(tmp_path, "1:1 with Bob", datetime(2026, 9, 12, 10, 0), 5, Summary("s", [], []), [])
+
+    results = search_notes(tmp_path, query="standup")
+
+    assert [n.title for n in results] == ["Team Standup"]
+
+
+def test_search_notes_filters_by_query_in_summary(tmp_path):
+    from notetaker.notes import search_notes
+
+    write_note(tmp_path, "Meeting A", datetime(2026, 9, 11, 10, 0), 5, Summary("Discussed the roadmap", [], []), [])
+    write_note(tmp_path, "Meeting B", datetime(2026, 9, 12, 10, 0), 5, Summary("Discussed hiring", [], []), [])
+
+    results = search_notes(tmp_path, query="roadmap")
+
+    assert [n.title for n in results] == ["Meeting A"]
+
+
+def test_search_notes_filters_by_tag(tmp_path):
+    from notetaker.notes import search_notes
+
+    write_note(tmp_path, "Meeting A", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], ["project-x"]), [])
+    write_note(tmp_path, "Meeting B", datetime(2026, 9, 12, 10, 0), 5, Summary("s", [], ["project-y"]), [])
+
+    results = search_notes(tmp_path, tag="project-x")
+
+    assert [n.title for n in results] == ["Meeting A"]
+
+
+def test_search_notes_filters_by_date_range(tmp_path):
+    from notetaker.notes import search_notes
+
+    write_note(tmp_path, "Too Early", datetime(2026, 9, 1, 10, 0), 5, Summary("s", [], []), [])
+    write_note(tmp_path, "In Range", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], []), [])
+    write_note(tmp_path, "Too Late", datetime(2026, 9, 30, 10, 0), 5, Summary("s", [], []), [])
+
+    results = search_notes(tmp_path, start_date=date(2026, 9, 10), end_date=date(2026, 9, 15))
+
+    assert [n.title for n in results] == ["In Range"]
+
+
+def test_search_notes_combines_filters_with_and(tmp_path):
+    from notetaker.notes import search_notes
+
+    write_note(tmp_path, "Standup A", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], ["project-x"]), [])
+    write_note(tmp_path, "Standup B", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], ["project-y"]), [])
+
+    results = search_notes(tmp_path, query="standup", tag="project-x")
+
+    assert [n.title for n in results] == ["Standup A"]
+
+
+def test_search_notes_no_filters_returns_everything_newest_first(tmp_path):
+    from notetaker.notes import search_notes
+
+    write_note(tmp_path, "Old", datetime(2026, 9, 1, 9, 0), 5, Summary("s", [], []), [])
+    write_note(tmp_path, "New", datetime(2026, 9, 11, 9, 0), 5, Summary("s", [], []), [])
+
+    results = search_notes(tmp_path)
+
+    assert [n.title for n in results] == ["New", "Old"]

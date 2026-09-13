@@ -350,6 +350,16 @@ def test_list_all_notes_returns_notes_sorted_by_date(tmp_path):
     assert metas[0].title == "Standup"
 
 
+def test_search_notes_delegates_to_notes_module(tmp_path):
+    from notetaker.service import search_notes
+
+    write_note(tmp_path / "notes", "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], ["proj"]), [])
+
+    results = search_notes(_config(tmp_path), tag="proj")
+
+    assert [n.title for n in results] == ["Standup"]
+
+
 def test_get_note_body_returns_body_text(tmp_path):
     notes_dir = tmp_path / "notes"
     write_note(notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("Summary text", [], []), ["[00:00:01] hi"])
