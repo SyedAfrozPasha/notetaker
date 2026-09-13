@@ -670,3 +670,116 @@ def test_notes_detail_has_copy_full_markdown_button(client, monkeypatch, tmp_pat
 
     assert 'id="full-markdown"' in response.text
     assert "the raw markdown body" in response.text
+
+
+def test_notes_edit_form_prefills_current_fields(client, monkeypatch, tmp_path):
+    from notetaker.service import NoteDetail
+
+    detail = NoteDetail(
+        note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
+        duration_minutes=5, tags=["proj"], summary_text="old summary",
+        action_items=["item one", "item two"], transcript="t",
+        path=tmp_path / "2026-09-11-standup.md",
+    )
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", lambda config, note_id: detail)
+
+    response = client.get("/notes/2026-09-11-standup/edit")
+
+    assert response.status_code == 200
+    assert 'value="Standup"' in response.text
+    assert "old summary" in response.text
+    assert "item one" in response.text
+    assert "item two" in response.text
+    assert "proj" in response.text
+
+
+def test_notes_edit_form_shows_not_found_for_missing_note(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+
+    def fail(config, note_id):
+        raise service.ServiceError(f"no note found with id '{note_id}'.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", fail)
+
+    response = client.get("/notes/nonexistent/edit")
+
+    assert response.status_code == 200
+    assert "no note found" in response.text
+
+
+def test_notes_edit_form_shows_setup_error_when_config_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+
+    def fail(path):
+        raise service.ServiceError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", fail)
+
+    response = client.get("/notes/2026-09-11-standup/edit")
+
+    assert response.status_code == 200
+    assert "not set up" in response.text
+
+
+def test_notes_edit_submit_updates_note_and_redirects(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    calls = {}
+
+    def fake_update_note(config, note_id, *, title, tags, summary_text, action_items):
+        calls["note_id"] = note_id
+        calls["title"] = title
+        calls["tags"] = tags
+        calls["summary_text"] = summary_text
+        calls["action_items"] = action_items
+        return tmp_path / f"{note_id}.md"
+
+    monkeypatch.setattr("notetaker.dashboard.service.update_note", fake_update_note)
+
+    response = client.post(
+        "/notes/2026-09-11-standup/edit",
+        data={
+            "title": "New Title",
+            "tags": "proj, planning",
+            "summary_text": "new summary",
+            "action_items": "item one\nitem two",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/notes/2026-09-11-standup"
+    assert calls["note_id"] == "2026-09-11-standup"
+    assert calls["title"] == "New Title"
+    assert calls["tags"] == ["proj", "planning"]
+    assert calls["summary_text"] == "new summary"
+    assert calls["action_items"] == ["item one", "item two"]
+
+
+def test_notes_edit_submit_shows_error_on_failure(client, monkeypatch, tmp_path):
+    from notetaker.service import NoteDetail
+
+    detail = NoteDetail(
+        note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
+        duration_minutes=5, tags=[], summary_text="s", action_items=[], transcript="",
+        path=tmp_path / "2026-09-11-standup.md",
+    )
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", lambda config, note_id: detail)
+
+    def fail(config, note_id, *, title, tags, summary_text, action_items):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("notetaker.dashboard.service.update_note", fail)
+
+    response = client.post(
+        "/notes/2026-09-11-standup/edit",
+        data={"title": "New Title", "tags": "", "summary_text": "s", "action_items": ""},
+    )
+
+    assert response.status_code == 200
+    assert "disk full" in response.text

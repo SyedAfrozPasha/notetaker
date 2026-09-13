@@ -2,7 +2,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -203,3 +203,48 @@ async def notes_detail(request: Request, note_id: str):
 
     full_markdown = service.get_note_body(config, note_id)
     return templates.TemplateResponse(request, "note_detail.html", {"detail": detail, "full_markdown": full_markdown})
+
+
+@app.get("/notes/{note_id}/edit", response_class=HTMLResponse)
+async def notes_edit_form(request: Request, note_id: str):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "note_edit.html", {"setup_error": str(exc)})
+
+    try:
+        detail = service.get_note_detail(config, note_id)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "note_edit.html", {"not_found": str(exc)})
+
+    return templates.TemplateResponse(request, "note_edit.html", {"detail": detail})
+
+
+@app.post("/notes/{note_id}/edit", response_class=HTMLResponse)
+async def notes_edit_submit(
+    request: Request,
+    note_id: str,
+    title: str = Form(...),
+    tags: str = Form(""),
+    summary_text: str = Form(""),
+    action_items: str = Form(""),
+):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "note_edit.html", {"setup_error": str(exc)})
+
+    tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    item_list = [line.strip() for line in action_items.splitlines() if line.strip()]
+    try:
+        service.update_note(
+            config, note_id, title=title, tags=tag_list, summary_text=summary_text, action_items=item_list
+        )
+    except Exception as exc:
+        try:
+            detail = service.get_note_detail(config, note_id)
+        except Exception:
+            return templates.TemplateResponse(request, "note_edit.html", {"not_found": str(exc)})
+        return templates.TemplateResponse(request, "note_edit.html", {"detail": detail, "error": str(exc)})
+
+    return RedirectResponse(f"/notes/{note_id}", status_code=303)
