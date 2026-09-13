@@ -972,6 +972,66 @@ def test_settings_page_shows_setup_error_when_config_missing(client, monkeypatch
     assert "not set up" in response.text
 
 
+def test_settings_update_config_saves_and_redirects(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    calls = {}
+
+    def fake_update_config(updates, path):
+        calls.update(updates)
+        return _config(tmp_path)
+
+    monkeypatch.setattr("notetaker.dashboard.service.update_config", fake_update_config)
+
+    response = client.post(
+        "/settings/config",
+        data={"notes_dir": "/new/notes", "whisper_model": "small", "ai_provider": "apple_local"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/settings"
+    assert calls == {"notes_dir": "/new/notes", "whisper_model": "small", "ai_provider": "apple_local"}
+
+
+def test_settings_update_config_shows_error_and_preserves_submitted_values_on_failure(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_masked_provider_credential", lambda config: None)
+
+    def fail(updates, path):
+        raise service.ServiceError("Unknown ai_provider 'bogus' — expected one of ('claude', 'apple_local').")
+
+    monkeypatch.setattr("notetaker.dashboard.service.update_config", fail)
+
+    response = client.post(
+        "/settings/config",
+        data={"notes_dir": "/attempted/notes", "whisper_model": "small", "ai_provider": "bogus"},
+    )
+
+    assert response.status_code == 200
+    assert "Unknown ai_provider" in response.text
+    assert 'value="/attempted/notes"' in response.text
+    assert 'value="small"' in response.text
+
+
+def test_settings_update_config_shows_setup_error_when_config_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+
+    def fail(path):
+        raise service.ServiceError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", fail)
+
+    response = client.post(
+        "/settings/config",
+        data={"notes_dir": "/x", "whisper_model": "tiny", "ai_provider": "claude"},
+    )
+
+    assert response.status_code == 200
+    assert "not set up" in response.text
+
+
 def test_base_layout_has_settings_nav_link(client):
     response = client.get("/")
 

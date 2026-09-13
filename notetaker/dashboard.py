@@ -315,3 +315,34 @@ async def settings(request: Request):
     return templates.TemplateResponse(
         request, "settings.html", {"config": config, "masked_credential": masked_credential}
     )
+
+
+@app.post("/settings/config", response_class=HTMLResponse)
+async def settings_update_config(
+    request: Request,
+    notes_dir: str = Form(...),
+    whisper_model: str = Form(...),
+    ai_provider: str = Form(...),
+):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "settings.html", {"setup_error": str(exc)})
+
+    try:
+        service.update_config(
+            {"notes_dir": notes_dir, "whisper_model": whisper_model, "ai_provider": ai_provider}, CONFIG_PATH
+        )
+    except Exception as exc:
+        submitted = {"notes_dir": notes_dir, "whisper_model": whisper_model, "ai_provider": ai_provider}
+        return templates.TemplateResponse(
+            request,
+            "settings.html",
+            {
+                "config": submitted,
+                "masked_credential": service.get_masked_provider_credential(config),
+                "config_error": str(exc),
+            },
+        )
+
+    return RedirectResponse("/settings", status_code=303)
