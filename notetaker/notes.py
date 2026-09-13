@@ -111,10 +111,24 @@ def _split_body(body: str) -> tuple[str, str, str]:
     transcript_md) exactly as `_render` wrote them, so a field-level edit
     can leave the sections it doesn't touch byte-for-byte unchanged.
     """
-    summary_part, _, rest = body.partition("## Action Items")
-    action_part, _, transcript_part = rest.partition("## Transcript")
-    summary_text = summary_part.replace("## Summary", "", 1).strip()
+    # Headings are matched only at line start, so a summary sentence that
+    # mentions "## Transcript" mid-line can't shift the sections.
+    summary_part, action_part, transcript_part = _partition_sections(body)
+    summary_text = re.sub(r"^## Summary[ \t]*\n?", "", summary_part, count=1, flags=re.MULTILINE).strip()
     return summary_text, action_part.strip(), transcript_part.strip()
+
+
+def _partition_sections(body: str) -> tuple[str, str, str]:
+    summary_part, rest = _split_at_heading(body, "Action Items")
+    action_part, transcript_part = _split_at_heading(rest, "Transcript")
+    return summary_part, action_part, transcript_part
+
+
+def _split_at_heading(text: str, heading: str) -> tuple[str, str]:
+    parts = re.split(rf"^## {re.escape(heading)}[ \t]*$", text, maxsplit=1, flags=re.MULTILINE)
+    if len(parts) == 1:
+        return parts[0], ""
+    return parts[0], parts[1]
 
 
 def update_note_fields(
@@ -166,8 +180,14 @@ def parse_note_body(path: Path) -> tuple[str, list[str], str]:
 
 def parse_note_meta(path: Path) -> NoteMeta:
     text = path.read_text()
-    _, frontmatter_raw, _ = text.split("---", 2)
-    fm = yaml.safe_load(frontmatter_raw)
+    # Split only on `---` lines, so a title or tag containing "---" can't
+    # truncate the frontmatter.
+    parts = re.split(r"^---[ \t]*$", text, maxsplit=2, flags=re.MULTILINE)
+    if len(parts) < 3:
+        raise ValueError(f"{path} has no YAML frontmatter")
+    fm = yaml.safe_load(parts[1])
+    if not isinstance(fm, dict):
+        raise ValueError(f"{path} frontmatter is not a mapping")
     return NoteMeta(
         note_id=path.stem,
         title=fm["title"],
@@ -185,7 +205,7 @@ def list_notes(notes_dir: Path) -> list[NoteMeta]:
     for p in sorted(notes_dir.glob("*.md")):
         try:
             metas.append(parse_note_meta(p))
-        except (ValueError, KeyError):
+        except (ValueError, KeyError, TypeError, yaml.YAMLError):
             continue
     return sorted(metas, key=lambda m: m.date, reverse=True)
 

@@ -286,3 +286,24 @@ def test_on_toggle_notifies_summarization_failure_variant(app, monkeypatch, tmp_
     app._on_toggle(None)
 
     assert calls[0][1] == "Summarization failed"
+
+
+def test_start_salvages_orphan_before_starting(app, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.menubar.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.menubar.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: None)
+    order = []
+    monkeypatch.setattr(
+        "notetaker.menubar.service.check_and_salvage_orphan",
+        lambda config, config_dir: order.append("salvage") or (tmp_path / "old-note.md"),
+    )
+    monkeypatch.setattr(
+        "notetaker.menubar.service.start_session", lambda title, config, config_dir: order.append("start")
+    )
+    notified = []
+    monkeypatch.setattr(app, "_notify", lambda *args: notified.append(args))
+
+    app._on_toggle(None)
+
+    assert order == ["salvage", "start"]
+    assert any("old-note.md" in arg for args in notified for arg in args)

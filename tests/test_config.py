@@ -117,14 +117,67 @@ def test_update_config_rejects_unsupported_field(tmp_path):
         update_config({"api_key_env": "SOMETHING_ELSE"}, path)
 
 
-def test_update_config_rejects_ai_model_field(tmp_path):
+def test_update_config_accepts_ai_model_field(tmp_path):
     from notetaker.config import update_config
 
     path = tmp_path / "config.yaml"
     write_default_config(path)
 
-    with pytest.raises(ConfigError, match="ai_model"):
-        update_config({"ai_model": "claude-opus-5"}, path)
+    config = update_config({"ai_model": "claude-opus-5"}, path)
+
+    assert config.ai_model == "claude-opus-5"
+
+
+def test_update_config_switching_provider_resets_model_to_provider_default(tmp_path):
+    from notetaker.config import update_config
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "notes_dir: ~/n\nwhisper_model: base.en\nai_provider: claude\n"
+        "ai_model: claude-sonnet-5\napi_key_env: ANTHROPIC_API_KEY\n"
+    )
+
+    config = update_config({"ai_provider": "apple_local"}, path)
+
+    assert config.ai_model == "apple-foundationmodel"
+    # And back again, with an explicit model this time — explicit wins.
+    config = update_config({"ai_provider": "claude", "ai_model": "claude-opus-5"}, path)
+    assert config.ai_model == "claude-opus-5"
+
+
+def test_default_config_is_fully_on_device_and_records_microphone(tmp_path):
+    path = tmp_path / "config.yaml"
+    write_default_config(path)
+
+    config = load_config(path)
+
+    assert config.ai_provider == "apple_local"
+    assert config.ai_model == "apple-foundationmodel"
+    assert config.capture_microphone is True
+    assert config.whisper_model_path is None
+
+
+def test_load_config_reads_optional_offline_and_mic_keys(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "notes_dir: ~/n\nwhisper_model: base.en\nai_provider: apple_local\nai_model: m\napi_key_env: K\n"
+        "whisper_model_path: /models/base.en\ncapture_microphone: false\n"
+    )
+
+    config = load_config(path)
+
+    assert config.whisper_model_path == "/models/base.en"
+    assert config.capture_microphone is False
+
+
+def test_load_config_rejects_non_boolean_capture_microphone(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "notes_dir: ~/n\nwhisper_model: base.en\nai_provider: apple_local\nai_model: m\napi_key_env: K\n"
+        "capture_microphone: maybe\n"
+    )
+    with pytest.raises(ConfigError, match="capture_microphone"):
+        load_config(path)
 
 
 def test_update_config_rejects_invalid_provider(tmp_path):

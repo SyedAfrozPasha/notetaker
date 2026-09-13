@@ -1,12 +1,13 @@
 import json
 import os
+import re
 import platform
 import shutil
 import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Protocol
 
 import anthropic
 from keyring.errors import KeyringError
@@ -58,18 +59,53 @@ def _dedupe_preserve_order(items: list[str]) -> list[str]:
     return result
 
 
+DEFAULT_CHUNK_TOKEN_LIMIT = 3000
+
+_TIMESTAMP_PREFIX = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] ?", re.MULTILINE)
+
+
+def strip_timestamps(transcript: str) -> str:
+    """Drops the `[hh:mm:ss] ` prefix from every line. Timestamps are useless
+    to the summarizer and cost ~5 tokens per line — on a 4K-context on-device
+    model that is a large share of the budget.
+    """
+    return _TIMESTAMP_PREFIX.sub("", transcript)
+
+
 def summarize_transcript(
-    transcript: str, provider: Provider, chunk_token_limit: int = 3000
+    transcript: str,
+    provider: Provider,
+    chunk_token_limit: int | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> Summary:
+    """Map-reduce summarization. The chunk size defaults to the provider's
+    own `chunk_token_limit` (an on-device model has a far smaller context
+    than a cloud one); `on_progress(done, total)` is called after each
+    provider call so a UI can show "Summarizing chunk 3 of 7".
+    """
+    if chunk_token_limit is None:
+        chunk_token_limit = getattr(provider, "chunk_token_limit", DEFAULT_CHUNK_TOKEN_LIMIT)
+    transcript = strip_timestamps(transcript)
     chunks = chunk_transcript(transcript, chunk_token_limit)
+    total = len(chunks) + (1 if len(chunks) > 1 else 0)
+    done = 0
+
+    def _summarize(text: str) -> Summary:
+        nonlocal done
+        result = provider.summarize(text)
+        done += 1
+        if on_progress:
+            on_progress(done, total)
+        return result
+
     if len(chunks) == 1:
-        return provider.summarize(chunks[0])
-    partials = [provider.summarize(chunk) for chunk in chunks]
+        return _summarize(chunks[0])
+    partials = [_summarize(chunk) for chunk in chunks]
     combined_text = "\n\n".join(p.text for p in partials)
     if estimate_tokens(combined_text) > chunk_token_limit:
         reduced = summarize_transcript(combined_text, provider, chunk_token_limit)
     else:
-        reduced = provider.summarize(combined_text)
+        reduced = _summarize(combined_text)
     tags = sorted({tag for p in partials for tag in p.tags} | set(reduced.tags))
     action_items = _dedupe_preserve_order(
         [item for p in partials for item in p.action_items] + reduced.action_items
@@ -85,19 +121,57 @@ def _parse_summary_json(raw: str) -> dict:
         if lines and lines[-1].strip() == "```":
             lines = lines[:-1]
         text = "\n".join(lines)
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        # Small models often wrap the JSON in prose ("Here is the summary: {...}").
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            raise
+        return json.loads(text[start : end + 1])
 
 
-SUMMARY_PROMPT_TEMPLATE = """You will be given a meeting transcript. Respond with ONLY a JSON object \
-with exactly these keys: "text" (a concise summary, string), "action_items" (a list of strings), \
-"tags" (a list of short lowercase topic tags, strings). No other text, no markdown fences.
+SUMMARY_PROMPT_TEMPLATE = """You are writing the minutes of a meeting (MoM) from a transcript. \
+Lines prefixed "Me:" were spoken by the person recording; lines prefixed "Others:" by other participants.
+
+Respond with ONLY a JSON object with exactly these keys:
+- "text": the minutes as a string — key discussion points, then decisions made, then open questions. Be concrete; \
+keep names, numbers, and dates from the transcript. No preamble.
+- "action_items": a list of strings, one per task, each formatted "Owner: task (due date if mentioned)". \
+Use "Me" when the recorder took the task; leave out the owner only if unknown.
+- "tags": a list of 2 to 5 short lowercase topic tags.
+No other text, no markdown fences.
 
 Transcript:
 {transcript}
 """
 
 
+def _summary_from_data(data: dict) -> Summary:
+    """Coerces the model's JSON into a Summary, tolerating a null or scalar
+    where a list was asked for — a malformed field must not crash note
+    rendering after the summarization fallback has already passed.
+    """
+    if not isinstance(data, dict) or "text" not in data:
+        raise ValueError("summary JSON is missing the required 'text' key")
+
+    def _as_list(value) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        return [str(item) for item in value]
+
+    return Summary(
+        text=str(data["text"]),
+        action_items=_as_list(data.get("action_items")),
+        tags=_as_list(data.get("tags")),
+    )
+
+
 class ClaudeProvider:
+    chunk_token_limit = 12000
+
     def __init__(self, api_key: str, model: str):
         self._client = anthropic.Anthropic(api_key=api_key)
         self._model = model
@@ -105,17 +179,17 @@ class ClaudeProvider:
     def summarize(self, transcript: str) -> Summary:
         response = self._client.messages.create(
             model=self._model,
-            max_tokens=4096,
+            max_tokens=16000,
             messages=[
                 {"role": "user", "content": SUMMARY_PROMPT_TEMPLATE.format(transcript=transcript)}
             ],
         )
-        data = _parse_summary_json(response.content[0].text)
-        return Summary(
-            text=data["text"],
-            action_items=data.get("action_items", []),
-            tags=data.get("tags", []),
-        )
+        if response.stop_reason == "max_tokens":
+            raise ValueError("Claude response was cut off at max_tokens; summary JSON is incomplete")
+        # Current Claude models think by default, so content[0] may be a
+        # thinking block: take the text blocks only.
+        text = "".join(block.text for block in response.content if block.type == "text")
+        return _summary_from_data(_parse_summary_json(text))
 
 
 def validate_claude_api_key(api_key: str) -> bool:
@@ -139,6 +213,11 @@ class AppleLocalError(Exception):
 
 
 class AppleLocalProvider:
+    # Apple's on-device foundation model has a 4096-token window shared by
+    # prompt AND reply. ~1800 transcript tokens leaves room for the prompt
+    # (~200) and a full JSON reply (~800) with margin for our rough estimate.
+    chunk_token_limit = 1800
+
     def __init__(self, base_url: str = APPLE_LOCAL_BASE_URL, model: str = "apple-foundationmodel"):
         self._base_url = base_url
         self._model = model
@@ -157,17 +236,16 @@ class AppleLocalProvider:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=180) as response:
                 data = json.loads(response.read())
-        except urllib.error.URLError as exc:
+        except urllib.error.HTTPError as exc:
+            raise AppleLocalError(f"apfel at {self._base_url} returned HTTP {exc.code}: {exc.reason}") from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
             raise AppleLocalError(f"Could not reach apfel at {self._base_url}: {exc}") from exc
+        except ValueError as exc:
+            raise AppleLocalError(f"apfel at {self._base_url} returned a non-JSON response: {exc}") from exc
         raw = data["choices"][0]["message"]["content"]
-        parsed = _parse_summary_json(raw)
-        return Summary(
-            text=parsed["text"],
-            action_items=parsed.get("action_items", []),
-            tags=parsed.get("tags", []),
-        )
+        return _summary_from_data(_parse_summary_json(raw))
 
 
 def check_apple_local_preflight() -> list[str]:
@@ -198,7 +276,11 @@ def check_apple_local_preflight() -> list[str]:
         )
         return problems
 
-    model_info = subprocess.run(["apfel", "--model-info"], capture_output=True, text=True)
+    try:
+        model_info = subprocess.run(["apfel", "--model-info"], capture_output=True, text=True)
+    except FileNotFoundError:
+        problems.append("apfel is installed but not on PATH. Run: brew link apfel")
+        return problems
     if model_info.returncode == 0:
         for line in model_info.stdout.splitlines():
             if "available:" in line and "yes" not in line:

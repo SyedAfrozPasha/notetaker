@@ -84,9 +84,17 @@ class NotetakerMenuBarApp(rumps.App):
     def _start(self, config):
         title = auto_generated_title(datetime.now())
         try:
-            service.start_session(title, config, CONFIG_DIR)
+            # A Recorder that crashed since the last 2s tick would otherwise be
+            # overwritten by start_session, losing its transcript for good.
+            salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
+            if salvaged_path is not None:
+                self._notify("Recovered a crashed session", "Saved as a note", salvaged_path.name)
+            info = service.start_session(title, config, CONFIG_DIR)
         except Exception as exc:
             rumps.alert(title="Could not start recording", message=str(exc))
+            return
+        for warning in list(getattr(info, "warnings", None) or []):
+            self._notify("Recording started with a warning", "Check audio routing", warning)
 
     def _stop(self, config, info):
         try:

@@ -94,7 +94,7 @@ def test_claude_provider_parses_json_response(monkeypatch):
     fake_client = MagicMock()
     fake_response = MagicMock()
     fake_response.content = [
-        MagicMock(text=json.dumps({"text": "summary", "action_items": ["do x"], "tags": ["standup"]}))
+        MagicMock(type="text", text=json.dumps({"text": "summary", "action_items": ["do x"], "tags": ["standup"]}))
     ]
     fake_client.messages.create.return_value = fake_response
     monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", lambda api_key: fake_client)
@@ -113,7 +113,7 @@ def test_claude_provider_parses_json_response_wrapped_in_markdown_fences(monkeyp
     fake_client = MagicMock()
     fake_response = MagicMock()
     fenced = "```json\n" + json.dumps({"text": "summary", "action_items": ["do x"], "tags": ["standup"]}) + "\n```"
-    fake_response.content = [MagicMock(text=fenced)]
+    fake_response.content = [MagicMock(type="text", text=fenced)]
     fake_client.messages.create.return_value = fake_response
     monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", lambda api_key: fake_client)
 
@@ -123,7 +123,7 @@ def test_claude_provider_parses_json_response_wrapped_in_markdown_fences(monkeyp
     assert result.text == "summary"
     assert result.action_items == ["do x"]
     assert result.tags == ["standup"]
-    assert fake_client.messages.create.call_args.kwargs["max_tokens"] == 4096
+    assert fake_client.messages.create.call_args.kwargs["max_tokens"] == 16000
 
 
 def _fake_urlopen_response(payload: dict):
@@ -339,3 +339,91 @@ def test_validate_claude_api_key_returns_false_when_call_raises(monkeypatch):
 
     monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", FakeClient)
     assert validate_claude_api_key("sk-ant-bad-key") is False
+
+
+def test_claude_provider_skips_thinking_blocks(monkeypatch):
+    # Current Claude models think by default, so content[0] is a thinking block.
+    fake_client = MagicMock()
+    fake_response = MagicMock()
+    fake_response.stop_reason = "end_turn"
+    fake_response.content = [
+        MagicMock(type="thinking", thinking="..."),
+        MagicMock(type="text", text=json.dumps({"text": "summary", "action_items": None, "tags": "solo"})),
+    ]
+    fake_client.messages.create.return_value = fake_response
+    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", lambda api_key: fake_client)
+
+    result = ClaudeProvider(api_key="k", model="claude-sonnet-5").summarize("hi")
+
+    assert result.text == "summary"
+    assert result.action_items == []  # null coerced, not passed through
+    assert result.tags == ["solo"]
+
+
+def test_claude_provider_raises_when_cut_off_at_max_tokens(monkeypatch):
+    fake_client = MagicMock()
+    fake_response = MagicMock()
+    fake_response.stop_reason = "max_tokens"
+    fake_response.content = [MagicMock(type="text", text='{"text": "trunc')]
+    fake_client.messages.create.return_value = fake_response
+    monkeypatch.setattr("notetaker.summarizer.anthropic.Anthropic", lambda api_key: fake_client)
+
+    with pytest.raises(ValueError, match="max_tokens"):
+        ClaudeProvider(api_key="k", model="claude-sonnet-5").summarize("hi")
+
+
+def test_summarize_transcript_strips_timestamps_and_uses_provider_chunk_limit():
+    class TinyContextProvider:
+        chunk_token_limit = 8  # ~32 chars per chunk
+
+        def __init__(self):
+            self.calls = []
+
+        def summarize(self, transcript):
+            self.calls.append(transcript)
+            return Summary(text="s", action_items=[], tags=[])
+
+    provider = TinyContextProvider()
+    transcript = "\n".join(f"[00:00:{i:02d}] Me: line {i}" for i in range(6))
+
+    summarize_transcript(transcript, provider)
+
+    assert all("[00:00" not in call for call in provider.calls)
+    assert "Me: line 0" in provider.calls[0]
+    assert len(provider.calls) > 1  # chunked at the provider's limit, not the 3000 default
+
+
+def test_summarize_transcript_reports_progress_per_provider_call():
+    class P:
+        def summarize(self, transcript):
+            return Summary(text="s", action_items=[], tags=[])
+
+    progress = []
+    transcript = "\n".join("word " * 20 for _ in range(10))
+    summarize_transcript(transcript, P(), chunk_token_limit=60, on_progress=lambda d, t: progress.append((d, t)))
+
+    assert progress[-1][0] == progress[-1][1]  # finished
+    assert progress[-1][1] > 1  # chunked: partials + a reduce call
+    assert [d for d, _ in progress] == list(range(1, len(progress) + 1))
+
+
+def test_parse_summary_json_extracts_object_from_surrounding_prose():
+    from notetaker.summarizer import _parse_summary_json
+
+    raw = 'Here are the minutes:\n{"text": "t", "action_items": ["Me: send deck"], "tags": ["x"]}\nHope this helps!'
+    assert _parse_summary_json(raw)["action_items"] == ["Me: send deck"]
+
+
+def test_apple_local_provider_uses_small_context_chunk_limit():
+    from notetaker.summarizer import AppleLocalProvider, ClaudeProvider
+
+    assert AppleLocalProvider.chunk_token_limit < 2048
+    assert ClaudeProvider.chunk_token_limit > AppleLocalProvider.chunk_token_limit
+
+
+def test_summary_prompt_asks_for_minutes_with_owners():
+    from notetaker.summarizer import SUMMARY_PROMPT_TEMPLATE
+
+    prompt = SUMMARY_PROMPT_TEMPLATE.format(transcript="x")
+    assert "Owner: task" in prompt
+    assert "decisions" in prompt

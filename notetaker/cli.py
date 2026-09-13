@@ -3,12 +3,22 @@ from rich.console import Console
 from rich.markup import escape
 
 from notetaker import service
-from notetaker.config import CONFIG_DIR, CONFIG_PATH, load_config
+from notetaker.config import CONFIG_DIR, CONFIG_PATH, ConfigError, load_config
 from notetaker.recorder import BlackHoleStatus
 from notetaker.service import ServiceError
 
 app = typer.Typer()
 console = Console()
+
+
+def _load_config():
+    """Loads the config, turning a missing/invalid file into a clean error
+    exit instead of a traceback."""
+    try:
+        return load_config()
+    except ConfigError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1)
 
 
 @app.callback(invoke_without_command=True)
@@ -24,7 +34,7 @@ def init():
     else:
         typer.echo(f"Config already exists at {CONFIG_PATH}, skipping.")
 
-    config = load_config()
+    config = _load_config()
     status = service.check_setup(config)
 
     if status.blackhole == BlackHoleStatus.NOT_INSTALLED:
@@ -46,14 +56,21 @@ def init():
     elif config.ai_provider == "apple_local":
         typer.echo("apfel is installed and running.")
 
-    typer.echo(f"Loading Whisper model '{config.whisper_model}' (downloads on first run)...")
-    service.ensure_whisper_model(config)
+    if config.whisper_model_path:
+        typer.echo(f"Loading Whisper model from '{config.whisper_model_path}'...")
+    else:
+        typer.echo(f"Loading Whisper model '{config.whisper_model}' (downloads on first run)...")
+    try:
+        service.ensure_whisper_model(config)
+    except ServiceError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1)
     typer.echo("Whisper model ready.")
 
 
 @app.command()
 def start(title: str):
-    config = load_config()
+    config = _load_config()
     with console.status("Starting recorder..."):
         try:
             salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
@@ -75,6 +92,8 @@ def start(title: str):
     if start_error is not None:
         typer.echo(f"error: {start_error}", err=True)
         raise typer.Exit(1)
+    for warning in info.warnings:
+        typer.echo(f"warning: {warning}", err=True)
     typer.echo("macOS will ask for microphone access to read the BlackHole device — please allow it.")
     typer.echo(
         "Reminder: Teams will not show its own recording indicator for this. "
@@ -90,17 +109,25 @@ def stop():
     except ServiceError as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1)
-    config = load_config()
+    config = _load_config()
     with console.status("Stopping recorder...") as status:
-        note_path = service.stop_session(
-            info, config, CONFIG_DIR, on_phase=lambda phase: status.update(escape(phase))
-        )
+        try:
+            note_path = service.stop_session(
+                info, config, CONFIG_DIR, on_phase=lambda phase: status.update(escape(phase))
+            )
+        except ServiceError as exc:
+            stop_error = str(exc)
+        else:
+            stop_error = None
+    if stop_error is not None:
+        typer.echo(f"error: {stop_error}", err=True)
+        raise typer.Exit(1)
     typer.echo(f"Saved note: {note_path}")
 
 
 @app.command(name="list")
 def list_command():
-    config = load_config()
+    config = _load_config()
     for meta in service.list_all_notes(config):
         tags = ", ".join(meta.tags)
         typer.echo(f"{meta.note_id}  {meta.title}  [{tags}]")
@@ -108,7 +135,7 @@ def list_command():
 
 @app.command()
 def show(note_id: str):
-    config = load_config()
+    config = _load_config()
     try:
         body = service.get_note_body(config, note_id)
     except ServiceError as exc:
@@ -121,7 +148,7 @@ def show(note_id: str):
 def set_api_key(api_key: str = typer.Argument(None)):
     if api_key is None:
         api_key = typer.prompt("Enter your Claude API key", hide_input=True)
-    config = load_config()
+    config = _load_config()
     try:
         service.save_provider_credential(config, api_key)
     except ServiceError as exc:
@@ -132,7 +159,7 @@ def set_api_key(api_key: str = typer.Argument(None)):
 
 @app.command("show-api-key")
 def show_api_key():
-    config = load_config()
+    config = _load_config()
     masked = service.get_masked_provider_credential(config)
     if masked is None:
         typer.echo(f"No credential stored for {config.api_key_env}.")
@@ -142,7 +169,7 @@ def show_api_key():
 
 @app.command()
 def resummarize(note_id: str):
-    config = load_config()
+    config = _load_config()
     try:
         note_path = service.resummarize_note(config, note_id)
     except ServiceError as exc:

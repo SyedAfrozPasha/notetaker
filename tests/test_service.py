@@ -2,11 +2,13 @@ import json
 import os
 import signal
 import sys
+import time
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
 
+from notetaker import service as service_module
 from notetaker.config import Config
 from notetaker.notes import parse_note_meta, write_note
 from notetaker.recorder import BlackHoleStatus
@@ -96,13 +98,16 @@ def test_start_session_writes_session_file_and_spawns_recorder(monkeypatch, tmp_
         return fake_proc
 
     monkeypatch.setattr("notetaker.service.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("notetaker.service.check_output_routing", lambda: None)
+    monkeypatch.setattr("notetaker.service.check_microphone_routing", lambda: None)
 
     info = start_session("Standup", _config(tmp_path), tmp_path)
 
     assert info.pid == 12345
     assert info.title == "Standup"
+    assert info.warnings == []
     assert captured_cmd["cmd"] == [
-        sys.executable, "-m", "notetaker.recorder", str(info.session_dir), "2", "tiny",
+        sys.executable, "-m", "notetaker.recorder", str(info.session_dir), "2", "tiny", "default", "",
     ]
     session = json.loads((tmp_path / "current_session.json").read_text())
     assert session == {
@@ -219,7 +224,7 @@ def test_stop_session_merges_session_tags_before_provider_tags(monkeypatch, tmp_
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
     monkeypatch.setattr(
         "notetaker.service.summarize_transcript",
-        lambda transcript, provider: Summary(text="s", action_items=[], tags=["ai-tag"]),
+        lambda transcript, provider, **kwargs: Summary(text="s", action_items=[], tags=["ai-tag"]),
     )
     info = SessionInfo(
         pid=999999, title="Standup", start_time=datetime(2026, 9, 11, 10, 0),
@@ -243,7 +248,7 @@ def test_stop_session_dedupes_tags_the_provider_also_produced(monkeypatch, tmp_p
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
     monkeypatch.setattr(
         "notetaker.service.summarize_transcript",
-        lambda transcript, provider: Summary(text="s", action_items=[], tags=["ai-only", "shared-tag"]),
+        lambda transcript, provider, **kwargs: Summary(text="s", action_items=[], tags=["ai-only", "shared-tag"]),
     )
     info = SessionInfo(
         pid=999999, title="Standup", start_time=datetime(2026, 9, 11, 10, 0),
@@ -270,7 +275,7 @@ def test_stop_session_leaves_provider_tags_alone_when_no_session_tags(monkeypatc
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
     monkeypatch.setattr(
         "notetaker.service.summarize_transcript",
-        lambda transcript, provider: Summary(text="s", action_items=[], tags=["ai-tag-a", "ai-tag-b"]),
+        lambda transcript, provider, **kwargs: Summary(text="s", action_items=[], tags=["ai-tag-a", "ai-tag-b"]),
     )
     info = SessionInfo(999999, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)  # no tags — defaults to []
 
@@ -312,7 +317,7 @@ def test_stop_session_salvages_transcript_and_writes_note(monkeypatch, tmp_path)
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
     monkeypatch.setattr(
         "notetaker.service.summarize_transcript",
-        lambda transcript, provider: Summary(text="summary text", action_items=["a"], tags=["t"]),
+        lambda transcript, provider, **kwargs: Summary(text="summary text", action_items=["a"], tags=["t"]),
     )
 
     note_path = stop_session(_session_info(session_dir), Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path)
@@ -330,7 +335,7 @@ def test_stop_session_saves_note_with_error_when_summarization_fails(monkeypatch
     monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
 
-    def raise_error(transcript, provider):
+    def raise_error(transcript, provider, **kwargs):
         raise RuntimeError("network down")
 
     monkeypatch.setattr("notetaker.service.summarize_transcript", raise_error)
@@ -444,9 +449,20 @@ def test_check_setup_reports_apple_local_problems(monkeypatch, tmp_path):
 def test_ensure_whisper_model_loads_transcriber(monkeypatch, tmp_path):
     from notetaker.service import ensure_whisper_model
     calls = []
-    monkeypatch.setattr("notetaker.service.Transcriber", lambda model: calls.append(model))
+    monkeypatch.setattr("notetaker.service.Transcriber", lambda model, model_path=None: calls.append((model, model_path)))
     ensure_whisper_model(_config(tmp_path))
-    assert calls == ["tiny"]
+    assert calls == [("tiny", None)]
+
+
+def test_ensure_whisper_model_explains_offline_alternative_when_download_fails(monkeypatch, tmp_path):
+    from notetaker.service import ensure_whisper_model
+
+    def fail(model, model_path=None):
+        raise RuntimeError("Connection to huggingface.co timed out")
+
+    monkeypatch.setattr("notetaker.service.Transcriber", fail)
+    with pytest.raises(ServiceError, match="whisper_model_path"):
+        ensure_whisper_model(_config(tmp_path))
 
 
 def test_stop_session_writes_transcript_sidecar_alongside_note(monkeypatch, tmp_path):
@@ -459,7 +475,7 @@ def test_stop_session_writes_transcript_sidecar_alongside_note(monkeypatch, tmp_
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
     monkeypatch.setattr(
         "notetaker.service.summarize_transcript",
-        lambda transcript, provider: Summary(text="summary text", action_items=[], tags=[]),
+        lambda transcript, provider, **kwargs: Summary(text="summary text", action_items=[], tags=[]),
     )
 
     note_path = stop_session(
@@ -531,7 +547,7 @@ def test_check_and_salvage_orphan_salvages_dead_session_into_note(monkeypatch, t
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
     monkeypatch.setattr(
         "notetaker.service.summarize_transcript",
-        lambda transcript, provider: Summary(text="summary text", action_items=[], tags=[]),
+        lambda transcript, provider, **kwargs: Summary(text="summary text", action_items=[], tags=[]),
     )
 
     note_path = check_and_salvage_orphan(
@@ -570,7 +586,7 @@ def test_check_and_salvage_orphan_computes_duration_from_transcript_mtime(monkey
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
     monkeypatch.setattr(
         "notetaker.service.summarize_transcript",
-        lambda transcript, provider: Summary(text="summary text", action_items=[], tags=[]),
+        lambda transcript, provider, **kwargs: Summary(text="summary text", action_items=[], tags=[]),
     )
 
     note_path = check_and_salvage_orphan(
@@ -710,7 +726,7 @@ def test_resummarize_note_replaces_summary_from_sidecar(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
     monkeypatch.setattr(
         "notetaker.service.summarize_transcript",
-        lambda transcript, provider: Summary(text="new summary", action_items=["new item"], tags=["new-tag"]),
+        lambda transcript, provider, **kwargs: Summary(text="new summary", action_items=["new item"], tags=["new-tag"]),
     )
 
     result_path = resummarize_note(
@@ -735,7 +751,7 @@ def test_resummarize_note_raises_and_preserves_note_when_provider_fails(monkeypa
 
     monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
 
-    def raise_error(transcript, provider):
+    def raise_error(transcript, provider, **kwargs):
         raise RuntimeError("network down")
 
     monkeypatch.setattr("notetaker.service.summarize_transcript", raise_error)
@@ -1106,3 +1122,123 @@ def test_service_update_config_returns_updated_config(tmp_path):
     config = update_config({"whisper_model": "small"}, path)
 
     assert config.whisper_model == "small"
+
+
+def test_pid_alive_false_for_exited_child_that_was_never_reaped():
+    # A Recorder spawned by the menubar/dashboard is their child; once it
+    # exits it is a zombie until reaped, and kill(pid, 0) still succeeds.
+    import subprocess
+    import sys
+
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        try:
+            os.kill(proc.pid, 0)
+        except OSError:
+            break
+        # Zombie or still running — pid_alive must reap and report dead once exited.
+        if pid_alive(proc.pid) is False:
+            break
+        time.sleep(0.05)
+    assert pid_alive(proc.pid) is False
+
+
+def test_terminate_recorder_escalates_to_sigkill_after_grace(monkeypatch):
+    from notetaker.service import _terminate_recorder
+
+    kills = []
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: True)
+    monkeypatch.setattr("notetaker.service.os.kill", lambda pid, sig: kills.append(sig))
+    monkeypatch.setattr("notetaker.service.time.sleep", lambda s: None)
+
+    _terminate_recorder(4242, grace_seconds=2)
+
+    assert kills == [signal.SIGTERM, signal.SIGKILL]
+
+
+def test_check_and_salvage_orphan_leaves_a_newer_live_session_alone(monkeypatch, tmp_path):
+    # Between reading the orphan and claiming the file, a stop+start replaced
+    # it with a new live Session: the salvager must hand it back untouched.
+    from notetaker.service import check_and_salvage_orphan, session_file_path
+
+    old_dir = tmp_path / "sessions" / "old"
+    old_dir.mkdir(parents=True)
+    session_file = session_file_path(tmp_path)
+    old = {"pid": 111, "title": "old", "start_time": "2026-09-11T10:00:00", "session_dir": str(old_dir)}
+    new = {"pid": 222, "title": "new", "start_time": "2026-09-11T11:00:00", "session_dir": str(old_dir)}
+    session_file.write_text(json.dumps(old))
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: pid == 222)
+
+    real_claim = service_module._claim_session_file
+
+    def claim_after_swap(config_dir):
+        session_file.write_text(json.dumps(new))
+        return real_claim(config_dir)
+
+    monkeypatch.setattr("notetaker.service._claim_session_file", claim_after_swap)
+    finalized = []
+    monkeypatch.setattr("notetaker.service._finalize_stop", lambda *a, **k: finalized.append(a))
+
+    assert check_and_salvage_orphan(Config(tmp_path, "tiny", "claude", "m", "K"), tmp_path) is None
+    assert finalized == []
+    assert json.loads(session_file.read_text())["pid"] == 222
+    assert not session_file.with_suffix(".salvaging").exists()
+
+
+def test_start_session_reports_routing_warnings_and_disables_mic_when_input_is_blackhole(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
+    fake_proc = MagicMock(pid=12345)
+    fake_proc.poll.return_value = None
+    captured_cmd = {}
+    monkeypatch.setattr(
+        "notetaker.service.subprocess.Popen", lambda cmd, **kwargs: captured_cmd.__setitem__("cmd", cmd) or fake_proc
+    )
+    monkeypatch.setattr("notetaker.service.check_output_routing", lambda: "output is MacBook Pro Speakers")
+    monkeypatch.setattr("notetaker.service.check_microphone_routing", lambda: "input is BlackHole 2ch")
+
+    info = start_session("Standup", _config(tmp_path), tmp_path)
+
+    assert info.warnings == ["output is MacBook Pro Speakers", "input is BlackHole 2ch"]
+    assert captured_cmd["cmd"][-2:] == ["none", ""]
+
+
+def test_start_session_passes_model_path_and_skips_mic_when_disabled(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
+    fake_proc = MagicMock(pid=12345)
+    fake_proc.poll.return_value = None
+    captured_cmd = {}
+    monkeypatch.setattr(
+        "notetaker.service.subprocess.Popen", lambda cmd, **kwargs: captured_cmd.__setitem__("cmd", cmd) or fake_proc
+    )
+    monkeypatch.setattr("notetaker.service.check_output_routing", lambda: None)
+    monkeypatch.setattr("notetaker.service.check_microphone_routing", lambda: (_ for _ in ()).throw(AssertionError("not called")))
+    config = Config(tmp_path, "tiny", "apple_local", "m", "K", whisper_model_path="/models/base.en", capture_microphone=False)
+
+    start_session("Standup", config, tmp_path)
+
+    assert captured_cmd["cmd"][-2:] == ["none", "/models/base.en"]
+
+
+def test_stop_session_reports_summarization_chunk_progress(monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n")
+    (tmp_path / "current_session.json").write_text("{}")
+    monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
+    monkeypatch.setattr("notetaker.service.get_provider", lambda config: object())
+
+    def fake_summarize(transcript, provider, on_progress=None, **kwargs):
+        on_progress(1, 3)
+        on_progress(2, 3)
+        return Summary(text="s", action_items=[], tags=[])
+
+    monkeypatch.setattr("notetaker.service.summarize_transcript", fake_summarize)
+    phases = []
+
+    stop_session(_session_info(session_dir), _config(tmp_path), tmp_path, on_phase=phases.append)
+
+    assert "Summarizing... chunk 1 of 3" in phases
+    assert "Summarizing... chunk 2 of 3" in phases

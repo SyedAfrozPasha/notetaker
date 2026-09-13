@@ -43,6 +43,7 @@ def generate_formula(service: str, repo_dir: Path, version: str) -> str:
   service do
     run ["{notetaker_bin}", "{service}"]
     keep_alive true
+    environment_variables PATH: std_service_path_env
     log_path var/"log/notetaker-{service}.log"
     error_log_path var/"log/notetaker-{service}.log"
   end

@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from notetaker import service
 from notetaker.config import Config
 from notetaker.dashboard import app
+from notetaker.service import SessionInfo
 
 
 @pytest.fixture
@@ -985,13 +986,27 @@ def test_settings_update_config_saves_and_redirects(client, monkeypatch, tmp_pat
 
     response = client.post(
         "/settings/config",
-        data={"notes_dir": "/new/notes", "whisper_model": "small", "ai_provider": "apple_local"},
+        data={
+            "notes_dir": "/new/notes",
+            "whisper_model": "small",
+            "ai_provider": "apple_local",
+            "ai_model": "apple-foundationmodel",
+            "whisper_model_path": "/models/small.en",
+            "capture_microphone": "on",
+        },
         follow_redirects=False,
     )
 
     assert response.status_code == 303
     assert response.headers["location"] == "/settings"
-    assert calls == {"notes_dir": "/new/notes", "whisper_model": "small", "ai_provider": "apple_local"}
+    assert calls == {
+        "notes_dir": "/new/notes",
+        "whisper_model": "small",
+        "ai_provider": "apple_local",
+        "ai_model": "apple-foundationmodel",
+        "whisper_model_path": "/models/small.en",
+        "capture_microphone": True,
+    }
 
 
 def test_settings_update_config_shows_error_and_preserves_submitted_values_on_failure(client, monkeypatch, tmp_path):
@@ -1087,3 +1102,53 @@ def test_base_layout_has_settings_nav_link(client):
 
     assert response.status_code == 200
     assert 'href="/settings"' in response.text
+
+
+def test_rejects_post_with_same_site_fetch_metadata(client, monkeypatch, tmp_path):
+    # Another local server (localhost:3000) is "same-site" — still not us.
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
+
+    assert client.post("/cancel", headers={"Sec-Fetch-Site": "same-site"}).status_code == 403
+    assert client.post("/cancel", headers={"Sec-Fetch-Site": "same-origin"}).status_code == 200
+
+
+def test_start_salvages_orphan_before_starting(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
+    order = []
+    monkeypatch.setattr(
+        "notetaker.dashboard.service.check_and_salvage_orphan",
+        lambda config, config_dir: order.append("salvage") or (tmp_path / "old-note.md"),
+    )
+    monkeypatch.setattr(
+        "notetaker.dashboard.service.start_session",
+        lambda title, config, config_dir, tags=None: order.append("start"),
+    )
+
+    response = client.post("/start", data={"title": "T"})
+
+    assert order == ["salvage", "start"]
+    assert "old-note.md" in response.text
+
+
+def test_start_shows_routing_warning_from_service(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
+    monkeypatch.setattr("notetaker.dashboard.service.check_and_salvage_orphan", lambda config, config_dir: None)
+    monkeypatch.setattr(
+        "notetaker.dashboard.service.start_session",
+        lambda title, config, config_dir, tags=None: SessionInfo(
+            pid=1, title=title, start_time=datetime.now(), session_dir=tmp_path, warnings=["output is Speakers"]
+        ),
+    )
+
+    response = client.post("/start", data={"title": "T"})
+
+    assert "Warning: output is Speakers" in response.text

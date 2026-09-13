@@ -32,8 +32,27 @@ echo "Using $PYTHON_BIN ($("$PYTHON_BIN" --version))"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$REPO_DIR/.venv"
 
+if [ -f "$HOME/.notetaker/current_session.json" ]; then
+  echo "error: a recording is in progress (found ~/.notetaker/current_session.json)." >&2
+  echo "       Run 'notetaker stop' first, then re-run ./install.sh" >&2
+  exit 1
+fi
+
 if [ -d "$VENV_DIR" ]; then
   echo "Existing virtualenv found at $VENV_DIR, recreating it..."
+  # The dashboard/menubar services run out of this venv; stop any that are
+  # running so they don't crash-loop while it is rebuilt, and restart them
+  # at the end.
+  RESTART_SERVICES=""
+  if command -v brew >/dev/null 2>&1; then
+    for svc in notetaker-dashboard notetaker-menubar; do
+      if brew services list 2>/dev/null | grep -E "^$svc\s+(started|scheduled|error)" >/dev/null; then
+        echo "Stopping $svc while the virtualenv is rebuilt..."
+        brew services stop "$svc" >/dev/null 2>&1 || true
+        RESTART_SERVICES="$RESTART_SERVICES $svc"
+      fi
+    done
+  fi
   rm -rf "$VENV_DIR"
 fi
 
@@ -48,6 +67,11 @@ ln -sf "$VENV_DIR/bin/notetaker" "$BIN_DIR/notetaker"
 echo ""
 echo "Generating personal Homebrew formulas for 'brew services' (dashboard + menu bar)..."
 "$VENV_DIR/bin/python" -m notetaker.brew_formula
+
+for svc in ${RESTART_SERVICES:-}; do
+  echo "Restarting $svc..."
+  brew services start "$svc" >/dev/null 2>&1 || echo "warning: could not restart $svc; run 'brew services start $svc'" >&2
+done
 
 echo ""
 echo "Installed. Make sure $BIN_DIR is on your PATH, then run:"

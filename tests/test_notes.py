@@ -352,3 +352,33 @@ def test_search_notes_no_filters_returns_everything_newest_first(tmp_path):
     results = search_notes(tmp_path)
 
     assert [n.title for n in results] == ["New", "Old"]
+
+
+def test_parse_note_meta_survives_triple_dash_in_title(tmp_path):
+    summary = Summary(text="s", action_items=[], tags=[])
+    path = write_note(tmp_path, "Planning --- Q4", datetime(2026, 9, 11, 10, 0), 5, summary, [])
+    assert parse_note_meta(path).title == "Planning --- Q4"
+
+
+def test_list_notes_skips_md_file_with_invalid_yaml_frontmatter(tmp_path):
+    summary = Summary(text="s", action_items=[], tags=[])
+    write_note(tmp_path, "Standup", datetime(2026, 9, 11, 10, 0), 5, summary, [])
+    (tmp_path / "broken.md").write_text("---\ntitle: [unclosed\n---\nbody\n")
+    (tmp_path / "rules.md").write_text("---\n---\nTwo horizontal rules, no mapping.\n")
+
+    notes = list_notes(tmp_path)
+
+    assert [n.title for n in notes] == ["Standup"]
+
+
+def test_split_body_ignores_headings_mentioned_mid_line(tmp_path):
+    from notetaker.notes import parse_note_body
+
+    summary = Summary(text="We reviewed the ## Transcript section format.", action_items=["a"], tags=[])
+    path = write_note(tmp_path, "T", datetime(2026, 9, 11, 10, 0), 5, summary, ["[00:00:01] hi"])
+
+    summary_text, action_items, transcript = parse_note_body(path)
+
+    assert summary_text == "We reviewed the ## Transcript section format."
+    assert action_items == ["a"]
+    assert transcript == "[00:00:01] hi"

@@ -24,7 +24,10 @@ async def _reject_cross_site_posts(request: Request, call_next):
     reject only when it explicitly says cross-site, so non-browser local
     tools (which don't send this header at all) are unaffected.
     """
-    if request.method == "POST" and request.headers.get("sec-fetch-site") == "cross-site":
+    fetch_site = request.headers.get("sec-fetch-site")
+    if request.method == "POST" and fetch_site not in (None, "same-origin", "none"):
+        # "same-site" covers every other local server (localhost:3000 …), which
+        # is exactly the origin a malicious page would use — reject it too.
         return HTMLResponse("Cross-site requests are not allowed.", status_code=403)
     return await call_next(request)
 
@@ -60,12 +63,12 @@ def _parse_date(value: str | None) -> date | None:
 
 
 @app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
+def index(request: Request):
     return templates.TemplateResponse(request, "index.html", {})
 
 
 @app.get("/status", response_class=HTMLResponse)
-async def status(request: Request):
+def status(request: Request):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
@@ -84,21 +87,30 @@ async def status(request: Request):
 
 
 @app.post("/start", response_class=HTMLResponse)
-async def start(request: Request, title: str = Form(...), tags: str = Form("")):
+def start(request: Request, title: str = Form(...), tags: str = Form("")):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
         return templates.TemplateResponse(request, "_status.html", {"setup_error": str(exc)})
 
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    context = {}
     try:
-        service.start_session(title, config, CONFIG_DIR, tags=tag_list)
+        # Same salvage-before-start as the CLI: a Recorder that crashed since
+        # the last status poll must be saved, not overwritten.
+        salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
+        if salvaged_path is not None:
+            context["success"] = f"Recovered a crashed session and saved it as {salvaged_path.name}"
+        info = service.start_session(title, config, CONFIG_DIR, tags=tag_list)
     except Exception as exc:
         return templates.TemplateResponse(
-            request, "_status.html", {**_status_context(config), "error": str(exc)}
+            request, "_status.html", {**_status_context(config), **context, "error": str(exc)}
         )
+    warnings = list(getattr(info, "warnings", None) or [])
+    if warnings:
+        context["warning"] = " ".join(warnings)
 
-    return templates.TemplateResponse(request, "_status.html", _status_context(config))
+    return templates.TemplateResponse(request, "_status.html", {**_status_context(config), **context})
 
 
 def _note_summarization_failed(note_path: Path) -> bool:
@@ -111,7 +123,7 @@ def _note_summarization_failed(note_path: Path) -> bool:
 
 
 @app.post("/stop", response_class=HTMLResponse)
-async def stop(request: Request):
+def stop(request: Request):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
@@ -138,7 +150,7 @@ async def stop(request: Request):
 
 
 @app.post("/cancel", response_class=HTMLResponse)
-async def cancel(request: Request):
+def cancel(request: Request):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
@@ -163,7 +175,7 @@ async def cancel(request: Request):
 
 
 @app.get("/notes", response_class=HTMLResponse)
-async def notes_list(
+def notes_list(
     request: Request,
     query: str | None = None,
     tag: str | None = None,
@@ -198,7 +210,7 @@ async def notes_list(
 
 
 @app.get("/notes/{note_id}", response_class=HTMLResponse)
-async def notes_detail(request: Request, note_id: str):
+def notes_detail(request: Request, note_id: str):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
@@ -214,7 +226,7 @@ async def notes_detail(request: Request, note_id: str):
 
 
 @app.get("/notes/{note_id}/edit", response_class=HTMLResponse)
-async def notes_edit_form(request: Request, note_id: str):
+def notes_edit_form(request: Request, note_id: str):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
@@ -229,7 +241,7 @@ async def notes_edit_form(request: Request, note_id: str):
 
 
 @app.post("/notes/{note_id}/edit", response_class=HTMLResponse)
-async def notes_edit_submit(
+def notes_edit_submit(
     request: Request,
     note_id: str,
     title: str = Form(...),
@@ -268,7 +280,7 @@ async def notes_edit_submit(
 
 
 @app.post("/notes/{note_id}/delete", response_class=HTMLResponse)
-async def notes_delete(request: Request, note_id: str):
+def notes_delete(request: Request, note_id: str):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
@@ -283,7 +295,7 @@ async def notes_delete(request: Request, note_id: str):
 
 
 @app.post("/notes/{note_id}/resummarize", response_class=HTMLResponse)
-async def notes_resummarize(request: Request, note_id: str):
+def notes_resummarize(request: Request, note_id: str):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
@@ -305,7 +317,7 @@ async def notes_resummarize(request: Request, note_id: str):
 
 
 @app.get("/settings", response_class=HTMLResponse)
-async def settings(request: Request):
+def settings(request: Request):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
@@ -318,23 +330,33 @@ async def settings(request: Request):
 
 
 @app.post("/settings/config", response_class=HTMLResponse)
-async def settings_update_config(
+def settings_update_config(
     request: Request,
     notes_dir: str = Form(...),
     whisper_model: str = Form(...),
     ai_provider: str = Form(...),
+    ai_model: str = Form(""),
+    whisper_model_path: str = Form(""),
+    capture_microphone: str = Form(""),
 ):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:
         return templates.TemplateResponse(request, "settings.html", {"setup_error": str(exc)})
 
+    updates = {
+        "notes_dir": notes_dir,
+        "whisper_model": whisper_model,
+        "ai_provider": ai_provider,
+        "whisper_model_path": whisper_model_path.strip() or None,
+        "capture_microphone": capture_microphone == "on",
+    }
+    if ai_model.strip():
+        updates["ai_model"] = ai_model.strip()
     try:
-        service.update_config(
-            {"notes_dir": notes_dir, "whisper_model": whisper_model, "ai_provider": ai_provider}, CONFIG_PATH
-        )
+        service.update_config(updates, CONFIG_PATH)
     except Exception as exc:
-        submitted = {"notes_dir": notes_dir, "whisper_model": whisper_model, "ai_provider": ai_provider}
+        submitted = {**updates, "ai_model": ai_model or config.ai_model}
         return templates.TemplateResponse(
             request,
             "settings.html",
@@ -349,7 +371,7 @@ async def settings_update_config(
 
 
 @app.post("/settings/credential", response_class=HTMLResponse)
-async def settings_update_credential(request: Request, api_key: str = Form(...)):
+def settings_update_credential(request: Request, api_key: str = Form(...)):
     try:
         config = service.get_config(CONFIG_PATH)
     except service.ServiceError as exc:

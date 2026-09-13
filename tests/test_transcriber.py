@@ -38,3 +38,70 @@ def test_transcribe_chunk_returns_empty_string_for_silence(tmp_path):
     wav_path.write_bytes(b"")
     transcriber = Transcriber("base.en", _model=FakeWhisperModel([]))
     assert transcriber.transcribe_chunk(wav_path, elapsed_seconds=0) == ""
+
+
+def _write_stereo_wav(path, sample_rate=16000, seconds=1):
+    import wave
+
+    import numpy as np
+
+    n = sample_rate * seconds
+    data = np.column_stack([np.full(n, 1000, dtype=np.int16), np.full(n, -1000, dtype=np.int16)])
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(data.tobytes())
+
+
+class FakePerChannelModel:
+    """Answers with different segments depending on which channel it is fed
+    (positive samples = Me, negative = Others), recording what it was given."""
+
+    def __init__(self, me_segments, others_segments):
+        self._me = me_segments
+        self._others = others_segments
+        self.inputs = []
+
+    def transcribe(self, audio, vad_filter=False, language=None):
+        self.inputs.append(audio)
+        segments = self._me if float(audio[0]) > 0 else self._others
+        return [SimpleNamespace(text=t, start=s) for s, t in segments], None
+
+
+def test_transcribe_chunk_labels_speakers_and_merges_by_time_for_stereo(tmp_path):
+    wav_path = tmp_path / "chunk.wav"
+    _write_stereo_wav(wav_path)
+    model = FakePerChannelModel(
+        me_segments=[(0.5, " hi all "), (1.0, "let's start")],
+        others_segments=[(3.0, "sounds good"), (4.2, "I'll send the deck")],
+    )
+    transcriber = Transcriber("base.en", _model=model)
+
+    lines = transcriber.transcribe_chunk(wav_path, elapsed_seconds=60).splitlines()
+
+    assert lines == [
+        "[00:01:00] Me: hi all let's start",
+        "[00:01:03] Others: sounds good I'll send the deck",
+    ]
+    assert len(model.inputs) == 2  # one Whisper pass per channel, as float32 arrays
+    assert all(inp.dtype.name == "float32" for inp in model.inputs)
+
+
+def test_transcribe_chunk_returns_empty_for_silent_stereo_chunk(tmp_path):
+    wav_path = tmp_path / "chunk.wav"
+    _write_stereo_wav(wav_path)
+    transcriber = Transcriber("base.en", _model=FakePerChannelModel([], []))
+    assert transcriber.transcribe_chunk(wav_path, elapsed_seconds=0) == ""
+
+
+def test_transcriber_loads_local_model_dir_without_network(monkeypatch):
+    calls = {}
+
+    def fake_whisper(model, device, compute_type, local_files_only=False):
+        calls.update(model=model, local_files_only=local_files_only)
+        return object()
+
+    monkeypatch.setattr("notetaker.transcriber.WhisperModel", fake_whisper)
+    Transcriber("base.en", model_path="/models/base.en")
+    assert calls == {"model": "/models/base.en", "local_files_only": True}

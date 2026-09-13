@@ -21,6 +21,23 @@ Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally 
    **BlackHole 2ch**, then select that Multi-Output Device as your Mac's sound output
    during meetings. This step is manual and not automated by this project.
 
+   **If you use headphones**, make a second Multi-Output Device containing your
+   headphones + BlackHole 2ch (Bluetooth headphones must be connected to show up in the
+   list). macOS switches the sound output straight to headphones every time you connect
+   them, which bypasses BlackHole and gives an empty transcript — so re-select the
+   headphones Multi-Output Device in **System Settings → Sound → Output** after
+   connecting. `notetaker start` warns if the current output is not a Multi-Output
+   Device, and the live transcript shows a warning if meeting audio stays silent while
+   your mic is active. Volume keys don't work while a Multi-Output Device is selected;
+   adjust volume in Audio MIDI Setup or on the headphones themselves.
+
+   **Your own voice** is recorded from the macOS default input device (built-in mic, or
+   your headset mic when connected — macOS picks it automatically). Nothing to configure;
+   set `capture_microphone: false` in the config to turn it off. Transcript lines are
+   labelled `Me:` / `Others:` so the minutes can assign action items to the right person.
+   Without headphones your mic also hears the speakers, so the meeting may appear twice
+   in the transcript (once under each label) — headphones avoid this.
+
 3. Clone this repo and run the installer:
 
    ```bash
@@ -33,14 +50,17 @@ Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally 
    dependency doesn't reliably build there) and will tell you clearly if your `python3`
    doesn't qualify.
 
-4. Set your AI provider:
-   - **Claude (default, cloud):** either run `notetaker set-api-key` (stores it in the
-     macOS Keychain — recommended), or export `ANTHROPIC_API_KEY` in your shell profile.
-   - **Apple Foundation Models (opt-in, fully local, no API key):** install
-     [`apfel`](https://github.com/Arthur-Ficial/apfel) (`brew install apfel`), start it
-     as a background service (`brew services start apfel`), and set both `ai_provider:
-     apple_local` and `ai_model: apple-foundationmodel` in `~/.notetaker/config.yaml`. Requires macOS 26+, Apple Silicon, and
-     Apple Intelligence enabled in System Settings.
+4. Set your AI provider (the default config is fully on-device — nothing leaves your Mac):
+   - **Apple Foundation Models (default, fully local, no API key):** install
+     [`apfel`](https://github.com/Arthur-Ficial/apfel) (`brew install apfel`) and start it
+     as a background service (`brew services start apfel`). Requires macOS 26+, Apple
+     Silicon, and Apple Intelligence enabled in System Settings. The on-device model has a
+     small (4K-token) context, so long meetings are summarized in chunks and then merged;
+     `notetaker stop` shows "Summarizing... chunk 3 of 7" while it works.
+   - **Claude (opt-in, cloud):** set `ai_provider: claude` and `ai_model: claude-sonnet-5`
+     in `~/.notetaker/config.yaml` (or pick it on the dashboard's Settings page, which
+     switches the model for you), then either run `notetaker set-api-key` (stores it in the
+     macOS Keychain — recommended) or export `ANTHROPIC_API_KEY` in your shell profile.
 
 5. Run setup checks and download the transcription model:
 
@@ -100,5 +120,22 @@ it's happening and will not show its own "this meeting is being recorded" indica
 other participants. `notetaker start` prints a reminder each time, but it's on you to let
 participants know per your organization's policy and local law.
 
-**First run note:** macOS will prompt for microphone access to read the BlackHole device
-when you first run `notetaker start` — please allow it for recording to work.
+**First run note:** macOS will prompt for microphone access (used for both BlackHole and your
+mic) when you first run `notetaker start` — please allow it for recording to work. If you start
+recordings from the menu bar app or dashboard (run by `brew services`), the prompt is attributed
+to the Python in `.venv`; if no prompt appears and the transcript stays empty, grant it under
+System Settings → Privacy & Security → Microphone.
+
+## Locked-down / corporate Macs (Homebrew only, no other downloads)
+
+- **BlackHole** installs via `brew install blackhole-2ch`, but it is a cask that runs a
+  `.pkg` installer and needs an administrator password.
+- **The Whisper model** is normally downloaded from huggingface.co on `notetaker init`.
+  If that host is blocked, copy a faster-whisper model directory from another machine
+  (e.g. `~/.cache/huggingface/hub/models--Systran--faster-whisper-base.en/snapshots/<id>/`,
+  which contains `model.bin`, `config.json`, `tokenizer.json`, `vocabulary.txt`) to the
+  locked-down Mac and set `whisper_model_path: /path/to/that/dir` in
+  `~/.notetaker/config.yaml`. `notetaker init` then loads it with no network access.
+- **`./install.sh`** uses `pip` against PyPI; it needs the same proxy access your other
+  Python tooling has.
+- With the default `apple_local` provider no cloud service is contacted at any point.

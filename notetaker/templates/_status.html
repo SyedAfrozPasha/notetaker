@@ -3,6 +3,7 @@
 {% elif recording %}
 <p class="recording">&#9679; Recording ({{ elapsed }})</p>
 {% if success %}<p class="success">{{ success }}</p>{% endif %}
+{% if warning %}<p class="error">Warning: {{ warning }}</p>{% endif %}
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 <textarea readonly>{{ transcript }}</textarea>
 <form hx-post="/stop" hx-target="#status" hx-swap="innerHTML">
@@ -14,6 +15,7 @@
 {% else %}
 <p class="idle">Not recording.</p>
 {% if success %}<p class="success">{{ success }}</p>{% endif %}
+{% if warning %}<p class="error">Warning: {{ warning }}</p>{% endif %}
 {% if error %}<p class="error">{{ error }}</p>{% endif %}
 <form id="start-form" hx-preserve="true" hx-post="/start" hx-target="#status" hx-swap="innerHTML">
   <label>Title <input type="text" name="title" required></label>

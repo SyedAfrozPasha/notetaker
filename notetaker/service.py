@@ -33,7 +33,13 @@ from notetaker.notes import (
     update_note_fields,
     write_note,
 )
-from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
+from notetaker.recorder import (
+    BlackHoleStatus,
+    check_blackhole,
+    check_microphone_routing,
+    check_output_routing,
+    find_blackhole_device_index,
+)
 from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript, validate_claude_api_key
 from notetaker.transcriber import Transcriber
 
@@ -51,6 +57,7 @@ class SessionInfo:
     start_time: datetime
     session_dir: Path
     tags: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)  # audio-routing warnings from start; not persisted
 
 
 def session_file_path(config_dir: Path) -> Path:
@@ -58,6 +65,17 @@ def session_file_path(config_dir: Path) -> Path:
 
 
 def pid_alive(pid: int) -> bool:
+    """Whether `pid` is a live process. A Recorder spawned by a long-lived UI
+    process (menu bar app, dashboard) is that process's child, and an exited
+    child stays a zombie — for which `kill(pid, 0)` still succeeds — until
+    someone reaps it. Reap first so a crashed Recorder reads as dead.
+    """
+    try:
+        reaped_pid, _ = os.waitpid(pid, os.WNOHANG)
+        if reaped_pid == pid:
+            return False
+    except ChildProcessError:
+        pass  # not our child (CLI process, or already reaped): fall through
     try:
         os.kill(pid, 0)
     except OSError:
@@ -121,6 +139,15 @@ def start_session(title: str, config: Config, config_dir: Path, tags: list[str] 
         raise ServiceError("BlackHole is not active. Run `notetaker init` for setup instructions.")
     device_index = find_blackhole_device_index()
 
+    warnings = [w for w in (check_output_routing(),) if w]
+    mic_arg = "none"
+    if config.capture_microphone:
+        mic_warning = check_microphone_routing()
+        if mic_warning:
+            warnings.append(mic_warning)
+        else:
+            mic_arg = "default"
+
     start_time = datetime.now()
     session_dir = config_dir / "sessions" / start_time.strftime("%Y%m%d-%H%M%S")
     session_dir.mkdir(parents=True, exist_ok=True)
@@ -129,7 +156,16 @@ def start_session(title: str, config: Config, config_dir: Path, tags: list[str] 
     log_file = open(log_path, "w")
     try:
         proc = subprocess.Popen(
-            [sys.executable, "-m", "notetaker.recorder", str(session_dir), str(device_index), config.whisper_model],
+            [
+                sys.executable,
+                "-m",
+                "notetaker.recorder",
+                str(session_dir),
+                str(device_index),
+                config.whisper_model,
+                mic_arg,
+                config.whisper_model_path or "",
+            ],
             start_new_session=True,
             stdout=log_file,
             stderr=subprocess.STDOUT,
@@ -141,7 +177,8 @@ def start_session(title: str, config: Config, config_dir: Path, tags: list[str] 
     if proc.poll() is not None:
         raise ServiceError(f"recorder failed to start — see {log_path} for details")
 
-    session_file.write_text(
+    _write_session_file(
+        session_file,
         json.dumps(
             {
                 "pid": proc.pid,
@@ -152,7 +189,9 @@ def start_session(title: str, config: Config, config_dir: Path, tags: list[str] 
             }
         )
     )
-    return SessionInfo(pid=proc.pid, title=title, start_time=start_time, session_dir=session_dir, tags=tags or [])
+    return SessionInfo(
+        pid=proc.pid, title=title, start_time=start_time, session_dir=session_dir, tags=tags or [], warnings=warnings
+    )
 
 
 def read_active_session(config_dir: Path) -> SessionInfo:
@@ -176,21 +215,49 @@ def read_active_session(config_dir: Path) -> SessionInfo:
         ) from exc
 
 
-def _terminate_recorder(pid: int) -> None:
-    if pid_alive(pid):
-        os.kill(pid, signal.SIGTERM)
-        for _ in range(30):
-            if not pid_alive(pid):
-                break
-            time.sleep(1)
+def _write_session_file(session_file: Path, content: str) -> None:
+    """Atomic write, so a concurrent poller never reads a half-written file."""
+    tmp_path = session_file.with_suffix(".tmp")
+    tmp_path.write_text(content)
+    os.replace(tmp_path, session_file)
 
 
-def _summarize_or_fallback(transcript: str, config: Config) -> Summary:
+def _terminate_recorder(pid: int, grace_seconds: int = 30) -> None:
+    """SIGTERM the Recorder and wait for it to finish its last chunk. If it
+    is still alive after the grace period, SIGKILL it: the caller is about
+    to read the transcript and delete the session dir, which must not
+    happen underneath a still-running Recorder.
+    """
+    if not pid_alive(pid):
+        return
+    os.kill(pid, signal.SIGTERM)
+    for _ in range(grace_seconds):
+        if not pid_alive(pid):
+            return
+        time.sleep(1)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        return
+    for _ in range(5):
+        if not pid_alive(pid):
+            return
+        time.sleep(1)
+
+
+def _summarize_or_fallback(
+    transcript: str, config: Config, on_phase: Callable[[str], None] | None = None
+) -> Summary:
     if not transcript.strip():
         return Summary(text="No audio was captured for this session.", action_items=[], tags=[])
+
+    def _progress(done: int, total: int) -> None:
+        if on_phase and total > 1:
+            on_phase(f"Summarizing... chunk {done} of {total}")
+
     try:
         provider = get_provider(config)
-        return summarize_transcript(transcript, provider)
+        return summarize_transcript(transcript, provider, on_progress=_progress)
     except Exception as exc:
         return Summary(text=f"Summarization failed: {exc}", action_items=[], tags=[])
 
@@ -234,7 +301,7 @@ def _finalize_stop(
 
     if on_phase:
         on_phase("Summarizing...")
-    summary = _summarize_or_fallback(transcript, config)
+    summary = _summarize_or_fallback(transcript, config, on_phase=on_phase)
     if info.tags:
         merged_tags = list(dict.fromkeys(info.tags + summary.tags))
         summary = replace(summary, tags=merged_tags)
@@ -437,7 +504,24 @@ def check_setup(config: Config) -> SetupStatus:
 
 
 def ensure_whisper_model(config: Config) -> None:
-    Transcriber(config.whisper_model)
+    """Loads (and on first run downloads) the Whisper model. On a machine
+    that cannot reach Hugging Face this is the step that fails, so the
+    error points at the offline alternative."""
+    try:
+        Transcriber(config.whisper_model, model_path=config.whisper_model_path)
+    except Exception as exc:
+        if config.whisper_model_path:
+            raise ServiceError(
+                f"could not load the Whisper model from whisper_model_path '{config.whisper_model_path}': {exc}. "
+                "It must be a faster-whisper (CTranslate2) model directory containing model.bin, config.json, "
+                "tokenizer.json and vocabulary.txt."
+            ) from exc
+        raise ServiceError(
+            f"could not download the Whisper model '{config.whisper_model}' from Hugging Face: {exc}. "
+            "If this machine cannot reach huggingface.co, copy a faster-whisper model directory from another "
+            "machine (e.g. ~/.cache/huggingface/hub/models--Systran--faster-whisper-base.en/snapshots/<id>/) "
+            "and set whisper_model_path in ~/.notetaker/config.yaml to that directory."
+        ) from exc
 
 
 def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:
@@ -460,6 +544,15 @@ def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:
     if claim is None:
         return None
     session_file, claim_path = claim
+    try:
+        claimed_pid = json.loads(claim_path.read_text()).get("pid")
+    except (ValueError, AttributeError, OSError):
+        claimed_pid = None
+    if claimed_pid != info.pid:
+        # A stop+start completed between our read and our claim: this is a
+        # different, live Session. Hand its file back untouched.
+        _release_claim(session_file, claim_path, restore=True)
+        return None
     transcript_path = info.session_dir / "transcript.txt"
     if transcript_path.exists():
         end_time = datetime.fromtimestamp(transcript_path.stat().st_mtime)

@@ -8,15 +8,19 @@ CONFIG_PATH = CONFIG_DIR / "config.yaml"
 
 DEFAULT_CONFIG_YAML = """\
 notes_dir: ~/notetaker-notes
-whisper_model: base.en          # tiny/base/small/medium
-ai_provider: claude
-ai_model: claude-sonnet-5
-api_key_env: ANTHROPIC_API_KEY  # read key from this env var; never stored in the file
+whisper_model: base.en          # tiny.en/base.en/small.en/medium.en
+# whisper_model_path: /path/to/faster-whisper-model   # offline machines: load the model from this
+#                                                      # directory instead of downloading from Hugging Face
+capture_microphone: true        # also record your own voice from the default input device
+ai_provider: apple_local        # apple_local (fully on-device via apfel) or claude (cloud)
+ai_model: apple-foundationmodel
+api_key_env: ANTHROPIC_API_KEY  # only used by ai_provider: claude; never stored in this file
 """
 
 REQUIRED_KEYS = ["notes_dir", "whisper_model", "ai_provider", "ai_model", "api_key_env"]
 VALID_PROVIDERS = ("claude", "apple_local")
-UPDATABLE_KEYS = {"notes_dir", "whisper_model", "ai_provider"}
+PROVIDER_DEFAULT_MODELS = {"claude": "claude-sonnet-5", "apple_local": "apple-foundationmodel"}
+UPDATABLE_KEYS = {"notes_dir", "whisper_model", "ai_provider", "ai_model", "capture_microphone", "whisper_model_path"}
 
 
 class ConfigError(Exception):
@@ -30,6 +34,8 @@ class Config:
     ai_provider: str
     ai_model: str
     api_key_env: str
+    whisper_model_path: str | None = None
+    capture_microphone: bool = True
 
 
 def write_default_config(path: Path = CONFIG_PATH) -> bool:
@@ -71,9 +77,19 @@ def _parse_config(raw: dict, path: Path) -> Config:
             ai_provider=raw["ai_provider"],
             ai_model=raw["ai_model"],
             api_key_env=raw["api_key_env"],
+            whisper_model_path=raw.get("whisper_model_path") or None,
+            capture_microphone=_as_bool(raw.get("capture_microphone", True), "capture_microphone"),
         )
     except TypeError as exc:
         raise ConfigError(f"Config at {path} has an invalid value: {exc}") from exc
+
+
+def _as_bool(value, key: str) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str) and value.strip().lower() in ("true", "false", "yes", "no", "on", "off", "1", "0"):
+        return value.strip().lower() in ("true", "yes", "on", "1")
+    raise TypeError(f"{key} must be true or false, got {value!r}")
 
 
 def load_config(path: Path = CONFIG_PATH) -> Config:
@@ -90,7 +106,14 @@ def update_config(updates: dict, path: Path = CONFIG_PATH) -> Config:
     if unknown:
         raise ConfigError(f"Cannot update unsupported config field(s): {', '.join(sorted(unknown))}.")
     raw = _load_yaml(path)
+    new_provider = updates.get("ai_provider")
+    if new_provider and new_provider != raw.get("ai_provider") and "ai_model" not in updates:
+        # Switching provider without naming a model: the old provider's model
+        # name is meaningless to the new one, so fall back to its default.
+        updates = {**updates, "ai_model": PROVIDER_DEFAULT_MODELS.get(new_provider, raw.get("ai_model"))}
     raw.update(updates)
+    if raw.get("whisper_model_path") in ("", None):
+        raw.pop("whisper_model_path", None)
     config = _parse_config(raw, path)
     path.write_text(yaml.safe_dump(raw, sort_keys=False))
     return config
