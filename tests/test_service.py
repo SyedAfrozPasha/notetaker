@@ -909,3 +909,56 @@ def test_get_current_session_status_returns_info_when_pid_alive(tmp_path):
     )
     info = get_current_session_status(tmp_path)
     assert info == SessionInfo(os.getpid(), "Standup", datetime(2026, 9, 11, 10, 0), tmp_path)
+
+
+def test_delete_note_removes_file_and_sidecar(tmp_path):
+    from notetaker.service import delete_note
+
+    notes_dir = tmp_path / "notes"
+    note_path = write_note(notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], []), ["hi"])
+    sidecar_path = notes_dir / f"{note_path.stem}.transcript.txt"
+    sidecar_path.write_text("hi")
+
+    delete_note(_config(tmp_path), "2026-09-11-standup")
+
+    assert not note_path.exists()
+    assert not sidecar_path.exists()
+
+
+def test_delete_note_removes_file_when_sidecar_absent(tmp_path):
+    from notetaker.service import delete_note
+
+    notes_dir = tmp_path / "notes"
+    note_path = write_note(notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], []), ["hi"])
+
+    delete_note(_config(tmp_path), "2026-09-11-standup")
+
+    assert not note_path.exists()
+
+
+def test_delete_note_raises_for_missing_note(tmp_path):
+    from notetaker.service import delete_note
+
+    with pytest.raises(ServiceError, match="no note found"):
+        delete_note(_config(tmp_path), "nonexistent")
+
+
+def test_get_live_transcript_preview_returns_transcript_text(tmp_path):
+    from notetaker.service import get_live_transcript_preview
+
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n")
+    info = SessionInfo(999999, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+
+    assert get_live_transcript_preview(info) == "[00:00:03] hello\n"
+
+
+def test_get_live_transcript_preview_returns_empty_string_before_first_chunk(tmp_path):
+    from notetaker.service import get_live_transcript_preview
+
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    info = SessionInfo(999999, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+
+    assert get_live_transcript_preview(info) == ""

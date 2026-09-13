@@ -266,6 +266,20 @@ def get_note_body(config: Config, note_id: str) -> str:
     return read_note_body(path)
 
 
+def delete_note(config: Config, note_id: str) -> None:
+    note_path = find_note_path(config.notes_dir, note_id)
+    if note_path is None:
+        raise ServiceError(f"no note found with id '{note_id}'.")
+    sidecar_path = note_path.parent / f"{note_path.stem}.transcript.txt"
+    sidecar_path.unlink(missing_ok=True)
+    note_path.unlink()
+
+
+def get_live_transcript_preview(info: SessionInfo) -> str:
+    transcript_path = info.session_dir / "transcript.txt"
+    return transcript_path.read_text() if transcript_path.exists() else ""
+
+
 def resummarize_note(config: Config, note_id: str) -> Path:
     note_path = find_note_path(config.notes_dir, note_id)
     if note_path is None:
