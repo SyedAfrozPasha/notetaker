@@ -263,3 +263,25 @@ async def notes_delete(request: Request, note_id: str):
         return templates.TemplateResponse(request, "note_detail.html", {"not_found": str(exc)})
 
     return Response(status_code=200, headers={"HX-Redirect": "/notes"})
+
+
+@app.post("/notes/{note_id}/resummarize", response_class=HTMLResponse)
+async def notes_resummarize(request: Request, note_id: str):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "note_detail.html", {"setup_error": str(exc)})
+
+    try:
+        service.resummarize_note(config, note_id)
+    except Exception as exc:
+        try:
+            detail = service.get_note_detail(config, note_id)
+        except Exception:
+            return templates.TemplateResponse(request, "note_detail.html", {"not_found": str(exc)})
+        full_markdown = service.get_note_body(config, note_id)
+        return templates.TemplateResponse(
+            request, "note_detail.html", {"detail": detail, "error": str(exc), "full_markdown": full_markdown}
+        )
+
+    return RedirectResponse(f"/notes/{note_id}", status_code=303)

@@ -835,3 +835,74 @@ def test_notes_delete_shows_setup_error_when_config_missing(client, monkeypatch,
 
     assert response.status_code == 200
     assert "not set up" in response.text
+
+
+def test_notes_resummarize_updates_summary_and_redirects(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    calls = []
+    monkeypatch.setattr(
+        "notetaker.dashboard.service.resummarize_note",
+        lambda config, note_id: calls.append(note_id) or (tmp_path / f"{note_id}.md"),
+    )
+
+    response = client.post("/notes/2026-09-11-standup/resummarize", follow_redirects=False)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/notes/2026-09-11-standup"
+    assert calls == ["2026-09-11-standup"]
+
+
+def test_notes_resummarize_shows_error_and_detail_on_failure(client, monkeypatch, tmp_path):
+    from notetaker.service import NoteDetail
+
+    detail = NoteDetail(
+        note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
+        duration_minutes=5, tags=[], summary_text="old summary", action_items=[], transcript="t",
+        path=tmp_path / "2026-09-11-standup.md",
+    )
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", lambda config, note_id: detail)
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_body", lambda config, note_id: "raw")
+
+    def fail(config, note_id):
+        raise service.ServiceError("resummarization failed: network down")
+
+    monkeypatch.setattr("notetaker.dashboard.service.resummarize_note", fail)
+
+    response = client.post("/notes/2026-09-11-standup/resummarize")
+
+    assert response.status_code == 200
+    assert "network down" in response.text
+    assert "old summary" in response.text
+
+
+def test_notes_resummarize_shows_not_found_when_note_missing_entirely(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+
+    def fail(config, note_id):
+        raise service.ServiceError(f"no note found with id '{note_id}'.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.resummarize_note", fail)
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", fail)
+
+    response = client.post("/notes/nonexistent/resummarize")
+
+    assert response.status_code == 200
+    assert "no note found" in response.text
+
+
+def test_notes_resummarize_shows_setup_error_when_config_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+
+    def fail(path):
+        raise service.ServiceError("No config found. Run `notetaker init` first.")
+
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", fail)
+
+    response = client.post("/notes/2026-09-11-standup/resummarize")
+
+    assert response.status_code == 200
+    assert "not set up" in response.text
