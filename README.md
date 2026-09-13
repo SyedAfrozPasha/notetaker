@@ -60,6 +60,30 @@ notetaker set-api-key            # store your Claude API key in the macOS Keycha
 notetaker show-api-key           # show the masked, currently active key
 ```
 
+## Menu bar app & dashboard (via `brew services`)
+
+`./install.sh` also generates two personal Homebrew formulas (`Formula/notetaker-dashboard.rb`,
+`Formula/notetaker-menubar.rb`) — not published anywhere, just local wrappers so `brew services`
+can auto-start and crash-restart these two long-running processes, the same way you'd manage any
+other background service on a Mac where Homebrew is the sanctioned install path. Neither formula
+builds anything; they just point `brew services` at the `.venv/bin/notetaker` that `./install.sh`
+already set up. See `docs/adr/0003-brew-services-for-ui-processes-no-app-packaging.md` for why.
+
+```bash
+brew tap syedafrozpasha/notetaker "$(pwd)"
+brew install syedafrozpasha/notetaker/notetaker-dashboard
+brew install syedafrozpasha/notetaker/notetaker-menubar
+
+brew services start notetaker-dashboard   # http://127.0.0.1:8420
+brew services start notetaker-menubar
+
+brew services list                        # check status
+brew services stop notetaker-dashboard    # or notetaker-menubar
+```
+
+Re-run `./install.sh` any time you move or re-clone this repo — the formulas bake in an absolute
+path and must be regenerated (then `brew uninstall`/`brew install` again) if that path changes.
+
 ## A note on recording consent
 
 This tool captures system audio directly — Teams (or any other meeting app) has no idea

@@ -46,5 +46,9 @@ mkdir -p "$BIN_DIR"
 ln -sf "$VENV_DIR/bin/notetaker" "$BIN_DIR/notetaker"
 
 echo ""
+echo "Generating personal Homebrew formulas for 'brew services' (dashboard + menu bar)..."
+"$VENV_DIR/bin/python" -m notetaker.brew_formula
+
+echo ""
 echo "Installed. Make sure $BIN_DIR is on your PATH, then run:"
 echo "  notetaker init"
