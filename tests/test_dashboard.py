@@ -205,6 +205,86 @@ def test_start_shows_setup_error_when_config_missing(client, monkeypatch, tmp_pa
     assert "not set up" in response.text
 
 
+def test_stop_saves_note_and_shows_success(client, monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+    note_path = tmp_path / "notes" / "2026-09-11-standup.md"
+    note_path.parent.mkdir(parents=True)
+    note_path.write_text("---\ntitle: Standup\n---\n\n## Summary\nAll good.\n")
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
+    monkeypatch.setattr(
+        "notetaker.dashboard.service.stop_session", lambda info, config, config_dir: note_path
+    )
+
+    response = client.post("/stop")
+
+    assert response.status_code == 200
+    assert "Not recording" in response.text
+    assert "2026-09-11-standup.md" in response.text
+
+
+def test_stop_shows_summarization_failed_note(client, monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+    note_path = tmp_path / "notes" / "2026-09-11-standup.md"
+    note_path.parent.mkdir(parents=True)
+    note_path.write_text("---\ntitle: Standup\n---\n\n## Summary\nSummarization failed: network down\n")
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
+    monkeypatch.setattr(
+        "notetaker.dashboard.service.stop_session", lambda info, config, config_dir: note_path
+    )
+
+    response = client.post("/stop")
+
+    assert response.status_code == 200
+    assert "summarization failed" in response.text.lower()
+
+
+def test_stop_shows_error_when_no_active_session(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: None)
+
+    response = client.post("/stop")
+
+    assert response.status_code == 200
+    assert "no active session" in response.text
+
+
+def test_stop_shows_error_when_stop_session_raises(client, monkeypatch, tmp_path):
+    session_dir = tmp_path / "sessions" / "20260911-100000"
+    session_dir.mkdir(parents=True)
+    info = service.SessionInfo(12345, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)
+
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_DIR", tmp_path)
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: info)
+    monkeypatch.setattr("notetaker.dashboard.service.get_live_transcript_preview", lambda info: "")
+
+    def fail(info, config, config_dir):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("notetaker.dashboard.service.stop_session", fail)
+
+    response = client.post("/stop")
+
+    assert response.status_code == 200
+    assert "disk full" in response.text
+    assert "Recording" in response.text
+
+
 def test_format_elapsed_under_an_hour():
     from notetaker.dashboard import _format_elapsed
 

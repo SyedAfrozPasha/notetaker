@@ -71,3 +71,39 @@ async def start(request: Request, title: str = Form(...), tags: str = Form("")):
         return templates.TemplateResponse(request, "_status.html", {"recording": False, "error": str(exc)})
 
     return templates.TemplateResponse(request, "_status.html", _status_context(config))
+
+
+def _note_summarization_failed(note_path) -> bool:
+    """Whether a just-saved Note's Summary indicates summarization failed —
+    matches the exact fallback text `service._summarize_or_fallback` writes.
+    Duplicated from notetaker.menubar's identical helper — see this plan's
+    Global Constraints on why dashboard.py doesn't import from menubar.py.
+    """
+    return "Summarization failed:" in note_path.read_text()
+
+
+@app.post("/stop", response_class=HTMLResponse)
+async def stop(request: Request):
+    try:
+        config = service.get_config(CONFIG_PATH)
+    except service.ServiceError as exc:
+        return templates.TemplateResponse(request, "_status.html", {"setup_error": str(exc)})
+
+    info = service.get_current_session_status(CONFIG_DIR)
+    if info is None:
+        return templates.TemplateResponse(
+            request, "_status.html", {"recording": False, "error": "no active session."}
+        )
+
+    try:
+        note_path = service.stop_session(info, config, CONFIG_DIR)
+    except Exception as exc:
+        return templates.TemplateResponse(
+            request, "_status.html", {**_status_context(config), "error": f"Could not save the recording: {exc}"}
+        )
+
+    if _note_summarization_failed(note_path):
+        success = f"Recording saved as {note_path.name} — summarization failed."
+    else:
+        success = f"Recording saved as {note_path.name}."
+    return templates.TemplateResponse(request, "_status.html", {"recording": False, "success": success})
