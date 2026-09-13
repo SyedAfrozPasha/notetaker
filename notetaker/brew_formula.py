@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 GITHUB_URL = "https://github.com/SyedAfrozPasha/notetaker"
@@ -43,3 +44,35 @@ def generate_formula(service: str, repo_dir: Path, version: str) -> str:
   end
 end
 '''
+
+
+def _read_version(repo_dir: Path) -> str:
+    pyproject_text = (repo_dir / "pyproject.toml").read_text()
+    match = re.search(r'^version = "([^"]+)"', pyproject_text, re.MULTILINE)
+    if not match:
+        raise ValueError(f"could not find a version in {repo_dir / 'pyproject.toml'}")
+    return match.group(1)
+
+
+def write_formulas(repo_dir: Path, version: str | None = None) -> list[Path]:
+    """Writes notetaker-dashboard.rb and notetaker-menubar.rb into
+    repo_dir/Formula/ (creating that directory if needed). If `version` is
+    not given, reads it from repo_dir/pyproject.toml. Returns the list of
+    paths written.
+    """
+    if version is None:
+        version = _read_version(repo_dir)
+    formula_dir = repo_dir / "Formula"
+    formula_dir.mkdir(exist_ok=True)
+    written = []
+    for service in ("dashboard", "menubar"):
+        path = formula_dir / f"notetaker-{service}.rb"
+        path.write_text(generate_formula(service, repo_dir, version))
+        written.append(path)
+    return written
+
+
+if __name__ == "__main__":
+    _repo_dir = Path(__file__).resolve().parent.parent
+    for _path in write_formulas(_repo_dir):
+        print(f"wrote {_path}")
