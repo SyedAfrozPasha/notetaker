@@ -321,7 +321,10 @@ def update_note(
     note_path = find_note_path(config.notes_dir, note_id)
     if note_path is None:
         raise ServiceError(f"no note found with id '{note_id}'.")
-    update_note_fields(note_path, title=title, tags=tags, summary_text=summary_text, action_items=action_items)
+    try:
+        update_note_fields(note_path, title=title, tags=tags, summary_text=summary_text, action_items=action_items)
+    except (ValueError, KeyError) as exc:
+        raise ServiceError(f"note '{note_id}' could not be parsed and cannot be edited: {exc}") from exc
     return note_path
 
 
@@ -342,7 +345,10 @@ def get_note_detail(config: Config, note_id: str) -> NoteDetail:
     note_path = find_note_path(config.notes_dir, note_id)
     if note_path is None:
         raise ServiceError(f"no note found with id '{note_id}'.")
-    meta = parse_note_meta(note_path)
+    try:
+        meta = parse_note_meta(note_path)
+    except (ValueError, KeyError) as exc:
+        raise ServiceError(f"note '{note_id}' could not be parsed: {exc}") from exc
     summary_text, action_items, transcript = parse_note_body(note_path)
     return NoteDetail(
         note_id=meta.note_id,

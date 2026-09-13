@@ -987,6 +987,17 @@ def test_update_note_raises_for_missing_note(tmp_path):
         update_note(_config(tmp_path), "nonexistent", title="X")
 
 
+def test_update_note_raises_for_unparseable_note(tmp_path):
+    from notetaker.service import update_note
+
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "2026-09-11-standup.md").write_text("not a valid note file, no frontmatter at all")
+
+    with pytest.raises(ServiceError, match="could not be parsed"):
+        update_note(_config(tmp_path), "2026-09-11-standup", title="X")
+
+
 def test_get_note_detail_returns_structured_fields(tmp_path):
     from notetaker.service import get_note_detail
 
@@ -1022,3 +1033,14 @@ def test_get_note_detail_raises_for_missing_note(tmp_path):
 
     with pytest.raises(ServiceError, match="no note found"):
         get_note_detail(_config(tmp_path), "nonexistent")
+
+
+def test_get_note_detail_raises_for_unparseable_note(tmp_path):
+    from notetaker.service import get_note_detail
+
+    notes_dir = tmp_path / "notes"
+    notes_dir.mkdir()
+    (notes_dir / "2026-09-11-standup.md").write_text("not a valid note file, no frontmatter at all")
+
+    with pytest.raises(ServiceError, match="could not be parsed"):
+        get_note_detail(_config(tmp_path), "2026-09-11-standup")
