@@ -73,7 +73,7 @@ async def start(request: Request, title: str = Form(...), tags: str = Form("")):
     return templates.TemplateResponse(request, "_status.html", _status_context(config))
 
 
-def _note_summarization_failed(note_path) -> bool:
+def _note_summarization_failed(note_path: Path) -> bool:
     """Whether a just-saved Note's Summary indicates summarization failed —
     matches the exact fallback text `service._summarize_or_fallback` writes.
     Duplicated from notetaker.menubar's identical helper — see this plan's
