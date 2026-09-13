@@ -39,10 +39,21 @@ def write_default_config(path: Path = CONFIG_PATH) -> bool:
     return True
 
 
+def _load_yaml(path: Path) -> dict:
+    """Parses a config file's YAML, raising ConfigError (not a raw
+    yaml.YAMLError) for malformed syntax — so a hand-edited config.yaml
+    never crashes a caller with an unhandled parser exception.
+    """
+    try:
+        return yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as exc:
+        raise ConfigError(f"Config at {path} is not valid YAML: {exc}") from exc
+
+
 def load_config(path: Path = CONFIG_PATH) -> Config:
     if not path.exists():
         raise ConfigError(f"No config found at {path}. Run `notetaker init` first.")
-    raw = yaml.safe_load(path.read_text()) or {}
+    raw = _load_yaml(path)
     missing = [key for key in REQUIRED_KEYS if key not in raw]
     if missing:
         raise ConfigError(f"Config at {path} is missing keys: {', '.join(missing)}")
@@ -68,7 +79,7 @@ def update_config(updates: dict, path: Path = CONFIG_PATH) -> Config:
     unknown = set(updates) - UPDATABLE_KEYS
     if unknown:
         raise ConfigError(f"Cannot update unsupported config field(s): {', '.join(sorted(unknown))}.")
-    raw = yaml.safe_load(path.read_text()) or {}
+    raw = _load_yaml(path)
     raw.update(updates)
     if raw.get("ai_provider") not in VALID_PROVIDERS:
         raise ConfigError(f"Unknown ai_provider '{raw.get('ai_provider')}' — expected one of {VALID_PROVIDERS}.")

@@ -1063,6 +1063,16 @@ def test_get_config_wraps_config_error_as_service_error(tmp_path):
         get_config(tmp_path / "missing.yaml")
 
 
+def test_get_config_wraps_malformed_yaml_as_service_error(tmp_path):
+    from notetaker.service import get_config
+
+    path = tmp_path / "config.yaml"
+    path.write_text("notes_dir: [unclosed\n")
+
+    with pytest.raises(ServiceError, match="not valid YAML"):
+        get_config(path)
+
+
 def test_get_config_returns_config_on_success(tmp_path):
     from notetaker.config import write_default_config
     from notetaker.service import get_config
