@@ -9,7 +9,7 @@ Decision: `system_audio: tap` is the default; `system_audio: blackhole` keeps th
 ## Consequences and things that bit us
 
 - The tap aggregate is **not bound to an output device** (no `master`/`subdevices` keys): binding would tie it to whatever output was current at start. Cost: it delivers no samples until some process has played audio, so `LiveCapture` pads silence instead of blocking on it.
-- **Never `Pa_StopStream` the tap aggregate.** With the mic stream and Whisper threads alive, stopping deadlocked inside CoreAudio (`AudioDeviceStop` → `HALB_Mutex::Lock`, IO thread parked on a cycle semaphore). Destroying the aggregate and tap while streams run never hung; the recorder does that, then `os._exit`s.
+- **Never `Pa_StopStream` the tap aggregate.** With the mic stream and the transcription worker thread alive, stopping deadlocked inside CoreAudio (`AudioDeviceStop` → `HALB_Mutex::Lock`, IO thread parked on a cycle semaphore). Destroying the aggregate and tap while streams run never hung; the recorder does that, then `os._exit`s.
 - **Aggregates outlive the process.** A hard exit left a public aggregate in the system device list until destroyed. Teardown must always destroy the aggregate explicitly, even on the error path.
 - Core Audio publishes a new device asynchronously (~0.5s); PortAudio must be re-initialized and polled before the aggregate is visible.
 - Permission is "System Audio Recording Only" (TCC `kTCCServiceAudioCapture`). From Terminal the prompt is attributed to Terminal; under `brew services` (launchd) it may not appear at all — untested at the time of this decision; the README tells the user to run one CLI recording first.

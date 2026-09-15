@@ -46,6 +46,10 @@ _Avoid_: Text, log, minutes
 A Transcript recovered from a Session whose Recorder stopped abnormally (crash or kill) — either because the user ran `stop` anyway, or because Salvage found it as an Orphaned session — used as-is rather than discarding the Session's only record of the Meeting.
 _Avoid_: Partial transcript (fine as a plain-English gloss, not as the standalone term)
 
+**ohr**:
+The third-party local server the Transcriber talks to; exposes Apple's on-device SpeechAnalyzer over an OpenAI-compatible HTTP endpoint. Not part of this project.
+_Avoid_: SpeechAnalyzer, Speech framework — SpeechAnalyzer is Apple's underlying framework; ohr is the specific tool this project depends on to reach it.
+
 **BlackHole**:
 The third-party virtual loopback audio device the Recorder reads system audio from — the mechanism that makes capturing a Meeting possible without a physical patch cable. Not part of this project; the user installs and enables it as a setup step.
 _Avoid_: Loopback device, virtual mic

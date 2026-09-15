@@ -24,8 +24,7 @@ DASHBOARD_PORT = 8420
 
 app = FastAPI()
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
-# htmx is vendored (not loaded from a CDN) so the dashboard works on a machine
-# with no internet access — the same machines `whisper_model_path` exists for.
+# htmx is vendored (not loaded from a CDN) so the dashboard works fully offline.
 app.mount("/static", StaticFiles(directory=str(_PACKAGE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(_PACKAGE_DIR / "templates"))
 
@@ -521,10 +520,8 @@ def settings(request: Request):
 def settings_update_config(
     request: Request,
     notes_dir: str = Form(...),
-    whisper_model: str = Form(...),
     ai_provider: str = Form(...),
     ai_model: str = Form(""),
-    whisper_model_path: str = Form(""),
     capture_microphone: str = Form(""),
     system_audio: str = Form("tap"),
     tap_process: str = Form(""),
@@ -536,9 +533,7 @@ def settings_update_config(
 
     updates = {
         "notes_dir": notes_dir,
-        "whisper_model": whisper_model,
         "ai_provider": ai_provider,
-        "whisper_model_path": whisper_model_path.strip() or None,
         "capture_microphone": capture_microphone == "on",
         "system_audio": system_audio,
         "tap_process": tap_process.strip() or None,

@@ -1,8 +1,9 @@
 # Notetaker — Full Installation & Usage Guide (macOS)
 
 Notetaker is a macOS-only CLI that records a meeting's **system audio** (e.g. a
-Microsoft Teams call) **and your own voice**, transcribes both locally with
-`faster-whisper`, and turns the finished transcript into AI-generated meeting minutes
+Microsoft Teams call) **and your own voice**, transcribes both locally with Apple's
+on-device SpeechAnalyzer (via [`ohr`](https://github.com/Arthur-Ficial/ohr)), and turns
+the finished transcript into AI-generated meeting minutes
 (summary, action items with owners, tags) saved as a Markdown note. With the default
 settings nothing leaves your Mac and nothing needs to be installed beyond the tool itself.
 
@@ -45,8 +46,9 @@ app's sound, taken straight from macOS through a **Core Audio process tap** — 
 audio device, and it doesn't matter whether you're on speakers or headphones) and your
 own voice (from your Mac's default microphone, or your headset mic when one is
 connected). It writes them as ~10 second stereo chunks, and a **Transcriber** turns each
-chunk into timestamped text with a local Whisper model, labelling lines `Me:` and
-`Others:` — no audio ever leaves your machine. When you run `notetaker stop`, the
+chunk into timestamped text with Apple's on-device SpeechAnalyzer (via `ohr`), labelling
+lines `Me:` and `Others:` — no audio ever leaves your machine, and there is no model to
+download. When you run `notetaker stop`, the
 transcript is sent to your chosen AI provider (by default Apple's on-device Foundation
 Model via `apfel`, so still nothing leaves the Mac) to produce minutes, action items
 with owners, and tags, and everything is saved as one Markdown file. If the Recorder
@@ -57,15 +59,18 @@ note the next time you run a command — you never lose the record of a meeting.
 
 ## Requirements
 
-- **macOS 14.2 or later** for the default audio capture (Core Audio process taps). The
-  default on-device AI provider needs **macOS 26+ and Apple Silicon** (see
-  [Step 3](#step-3--choose-and-configure-an-ai-provider)); older Macs can use the Claude
-  provider instead, and macOS older than 14.2 can use the
-  [BlackHole fallback](#fallback-blackhole-loopback-instead-of-the-audio-tap).
-- **Homebrew** (https://brew.sh) — used to install Python, `apfel`, and (optionally) to run
-  the menu bar app/dashboard as background services.
-- **Python 3.10 or 3.11** specifically. Not 3.12/3.13 — `faster-whisper`'s `PyAV`
-  dependency doesn't reliably build on newer Python. Install one if you don't have it:
+- **macOS 26+ and Apple Silicon**, required unconditionally — transcription runs on
+  Apple's on-device SpeechAnalyzer via `ohr`, which has no older-macOS fallback and no
+  cloud alternative (unlike the AI summarization step, transcription is not
+  provider-swappable; see [ADR 0005](docs/adr/0005-speechanalyzer-via-ohr-replaces-faster-whisper.md)).
+  Meeting-audio capture (Core Audio process taps) only needs macOS 14.2+ on its own, but
+  that's moot given the transcription requirement above; macOS older than 14.2 can still
+  use the [BlackHole fallback](#fallback-blackhole-loopback-instead-of-the-audio-tap) for
+  audio capture, but SpeechAnalyzer transcription itself still needs macOS 26+.
+- **Homebrew** (https://brew.sh) — used to install Python, `ohr`, `apfel` (if you use the
+  default on-device AI provider), and (optionally) to run the menu bar app/dashboard as
+  background services.
+- **Python 3.10 or 3.11** specifically. Install one if you don't have it:
   ```bash
   brew install python@3.11
   ```
@@ -151,6 +156,23 @@ Verify:
 notetaker --help
 ```
 
+### Install `ohr` (required, for transcription)
+
+Transcription is not optional or swappable — it always runs on Apple's on-device
+SpeechAnalyzer, reached via [`ohr`](https://github.com/Arthur-Ficial/ohr) (same author and
+install pattern as `apfel`, below). `install.sh` does not install this for you; do it once:
+
+```bash
+brew tap Arthur-Ficial/tap
+brew install Arthur-Ficial/tap/ohr
+```
+
+Unlike `apfel`, there is no `brew services start ohr` — `ohr`'s Homebrew formula has no
+service definition. Instead, `notetaker start` spawns its own `ohr --serve` process for
+the duration of each recording and tears it down on `stop`, on a fixed port distinct from
+`apfel`'s (so the two don't collide when both run). `notetaker init` tells you if `ohr`
+isn't installed or this Mac doesn't qualify (macOS 26+, Apple Silicon).
+
 ---
 
 ## Step 3 — Choose and configure an AI provider
@@ -220,9 +242,9 @@ notetaker show-api-key
 
 ## Step 4 — Run `notetaker init`
 
-This writes the default config file (if one doesn't exist yet), checks that audio capture
-and your AI provider are ready, and downloads the Whisper transcription model (only
-happens once — it's cached locally afterwards).
+This writes the default config file (if one doesn't exist yet), and checks that audio
+capture, `ohr` (transcription), and your AI provider are all ready. There is no model
+download step — SpeechAnalyzer's model ships with macOS itself.
 
 ```bash
 notetaker init
@@ -232,18 +254,15 @@ Expected output looks like:
 ```
 Wrote default config to /Users/you/.notetaker/config.yaml
 System audio: Core Audio process tap (nothing to install). macOS will ask for 'System Audio Recording' permission on the first `notetaker start`.
+ohr is installed (SpeechAnalyzer transcription).
 apfel is installed and running.
-Loading Whisper model 'base.en' (downloads on first run)...
-Whisper model ready.
 ```
 
-If something's missing, `init` tells you exactly what and how to fix it (e.g. "apfel is
-not installed. Run: brew install apfel", or "apple_local model is not available — enable
-Apple Intelligence…"). Re-run `notetaker init` any time after fixing a reported issue —
-it's safe to run repeatedly and won't overwrite an existing config.
-
-If the Whisper download fails because your Mac can't reach huggingface.co, see
-[Locked-down / corporate Macs](#locked-down--corporate-macs).
+If something's missing, `init` tells you exactly what and how to fix it (e.g. "ohr is not
+installed. Run: brew tap Arthur-Ficial/tap && brew install Arthur-Ficial/tap/ohr", "apfel
+is not installed. Run: brew install apfel", or "apple_local model is not available —
+enable Apple Intelligence…"). Re-run `notetaker init` any time after fixing a reported
+issue — it's safe to run repeatedly and won't overwrite an existing config.
 
 ---
 
@@ -416,7 +435,7 @@ What it offers:
   (title, tags, summary text, action items), **Delete**, and **Resummarize**.
 - **Settings** (`/settings`) — change every config value without hand-editing the YAML
   file: notes directory (type a path, or click **Choose in Finder…** to pick the folder in
-  macOS's own folder dialog, then **Save configuration**), Whisper model and offline model path, whether to record your
+  macOS's own folder dialog, then **Save configuration**), whether to record your
   microphone, the meeting audio source (tap or BlackHole) and the tap-only-this-app
   bundle id, AI provider and model. Switching provider fills in that provider's default
   model. When the provider is Claude, a section appears to set/replace the API key
@@ -473,9 +492,6 @@ Created by `notetaker init` with these defaults:
 
 ```yaml
 notes_dir: ~/notetaker-notes
-whisper_model: base.en          # tiny.en/base.en/small.en/medium.en
-# whisper_model_path: /path/to/faster-whisper-model   # offline machines: load the model from this
-#                                                      # directory instead of downloading from Hugging Face
 capture_microphone: true        # also record your own voice from the default input device
 system_audio: tap               # tap = Core Audio process tap (macOS 14.2+, nothing to install)
                                 # blackhole = BlackHole loopback device + Multi-Output Device
@@ -488,8 +504,6 @@ api_key_env: ANTHROPIC_API_KEY  # only used by ai_provider: claude; never stored
 | Key | Meaning | Notes |
 |---|---|---|
 | `notes_dir` | Where finished `.md` notes (and `.transcript.txt` sidecars) are saved | |
-| `whisper_model` | Local Whisper model size used for transcription | Larger = more accurate but slower and more memory. `base.en` keeps up with a meeting comfortably; `small.en` is noticeably more accurate on Apple Silicon and still faster than real time. `.en` variants are better for English-only meetings |
-| `whisper_model_path` | Optional. A local faster-whisper model directory to load instead of downloading | For Macs that can't reach huggingface.co — see [Locked-down / corporate Macs](#locked-down--corporate-macs) |
 | `capture_microphone` | `true`/`false`. Record your own voice from the macOS default input device | Off = transcript has only the meeting audio, no `Me:`/`Others:` labels |
 | `system_audio` | `tap` (default) or `blackhole` | `tap` needs macOS 14.2+ and the System Audio Recording permission; `blackhole` is the [fallback](#fallback-blackhole-loopback-instead-of-the-audio-tap) |
 | `tap_process` | Optional. Bundle id of the only app to capture in tap mode | e.g. `com.microsoft.teams2` (new Teams). Falls back to all system audio, with a note in the transcript, when that app isn't running |
@@ -501,6 +515,10 @@ The Claude API key itself is **never** stored in this file — only in the macOS
 (service name `notetaker`) or read from the environment at runtime. Every key except
 `api_key_env` can be changed from the dashboard's Settings page; all of them can be
 hand-edited.
+
+There is no config key for transcription: it is always Apple's on-device SpeechAnalyzer
+via `ohr`, with no model choice, no language other than English, and no fallback — see
+[ADR 0005](docs/adr/0005-speechanalyzer-via-ohr-replaces-faster-whisper.md).
 
 ---
 
@@ -515,15 +533,12 @@ websites), the defaults are designed for exactly that situation:
   BlackHole is a cask that runs a `.pkg` installer and needs an administrator password.
 - **The AI provider is on-device** (`apfel`, installed with Homebrew); no cloud service
   is contacted at any point with the default configuration.
-- **The Whisper model** is normally downloaded from huggingface.co on `notetaker init`.
-  If that host is blocked, copy a faster-whisper model directory from another machine —
-  e.g. `~/.cache/huggingface/hub/models--Systran--faster-whisper-base.en/snapshots/<id>/`,
-  which contains `model.bin`, `config.json`, `tokenizer.json`, `vocabulary.txt` — to the
-  locked-down Mac, and set in `~/.notetaker/config.yaml`:
-  ```yaml
-  whisper_model_path: /Users/you/models/faster-whisper-base.en
-  ```
-  `notetaker init` then loads it with no network access.
+- **Transcription needs no download at all.** SpeechAnalyzer's speech model ships with
+  macOS itself — only the `ohr` binary needs installing via Homebrew (see
+  [Install `ohr`](#step-2--clone-the-repo-and-run-the-installer)). This is exactly the
+  problem this project switched away from `faster-whisper` to solve: its Hugging Face
+  model download used to be the thing a locked-down machine couldn't reach. See
+  [ADR 0005](docs/adr/0005-speechanalyzer-via-ohr-replaces-faster-whisper.md).
 - **`./install.sh`** uses `pip` against PyPI; it needs the same proxy access your other
   Python tooling has.
 
@@ -658,12 +673,14 @@ brew install python@3.11
 ./install.sh
 ```
 
-**Whisper model download seems stuck / fails.**
-`notetaker init` downloads the model over the network the first time only; it's cached
-under `~/.cache/huggingface` (faster-whisper's default cache) afterward. Check your
-network connection and retry. If huggingface.co is blocked on this Mac, copy the model
-from another machine and set `whisper_model_path` — see
-[Locked-down / corporate Macs](#locked-down--corporate-macs).
+**"ohr is not installed."**
+```bash
+brew tap Arthur-Ficial/tap
+brew install Arthur-Ficial/tap/ohr
+```
+There is no download step after this — SpeechAnalyzer's model ships with macOS itself.
+If this error names a macOS version below 26, transcription cannot run on this Mac at all
+(no fallback); see [Requirements](#requirements).
 
 **"apfel is installed but its service is not running."**
 ```bash

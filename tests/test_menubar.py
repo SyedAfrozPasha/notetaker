@@ -104,7 +104,7 @@ def app():
 def _config(tmp_path):
     from notetaker.config import Config
 
-    return Config(tmp_path / "notes", "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
+    return Config(tmp_path / "notes", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
 
 
 def test_on_tick_shows_warning_when_config_missing(app, monkeypatch):

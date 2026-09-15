@@ -20,8 +20,7 @@ find_python() {
 }
 
 PYTHON_BIN=$(find_python) || {
-  echo "error: notetaker requires Python 3.10 or 3.11 (faster-whisper's PyAV dependency" >&2
-  echo "       does not reliably install on 3.12+/3.13). Install one, e.g.:" >&2
+  echo "error: notetaker requires Python 3.10 or 3.11. Install one, e.g.:" >&2
   echo "         brew install python@3.11" >&2
   echo "       then re-run ./install.sh" >&2
   exit 1

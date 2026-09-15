@@ -8,10 +8,6 @@ dependencies = [
     "pyyaml>=6.0",
     "sounddevice>=0.4",
     "numpy>=1.26",
-    "faster-whisper==1.0.3",
-    "ctranslate2==4.6.0",
-    "av==12.3.0",
-    "requests>=2.28",  # not imported by notetaker itself, but faster-whisper 1.0.3 imports it without declaring it
     "anthropic>=1.0",
     "keyring>=24",
     "rich>=13",

@@ -12,7 +12,7 @@ def test_write_default_config_creates_file(tmp_path):
 def test_write_default_config_is_idempotent(tmp_path):
     path = tmp_path / "config.yaml"
     write_default_config(path)
-    path.write_text("notes_dir: /custom\nwhisper_model: tiny\nai_provider: claude\nai_model: x\napi_key_env: Y\n")
+    path.write_text("notes_dir: /custom\nai_provider: claude\nai_model: x\napi_key_env: Y\n")
     assert write_default_config(path) is False
     assert "custom" in path.read_text()
 
@@ -26,14 +26,12 @@ def test_load_config_parses_valid_file(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(
         "notes_dir: ~/notetaker-notes\n"
-        "whisper_model: base.en\n"
         "ai_provider: claude\n"
         "ai_model: claude-sonnet-5\n"
         "api_key_env: ANTHROPIC_API_KEY\n"
     )
     config = load_config(path)
     assert isinstance(config, Config)
-    assert config.whisper_model == "base.en"
     assert config.notes_dir.is_absolute()
 
 
@@ -47,7 +45,7 @@ def test_load_config_missing_keys_raises(tmp_path):
 def test_load_config_rejects_unknown_provider(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(
-        "notes_dir: ~/x\nwhisper_model: base.en\nai_provider: bogus\n"
+        "notes_dir: ~/x\nai_provider: bogus\n"
         "ai_model: x\napi_key_env: Y\n"
     )
     with pytest.raises(ConfigError):
@@ -60,16 +58,15 @@ def test_update_config_changes_only_given_fields(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(
         "notes_dir: ~/notetaker-notes\n"
-        "whisper_model: base.en\n"
         "ai_provider: claude\n"
         "ai_model: claude-sonnet-5\n"
         "api_key_env: ANTHROPIC_API_KEY\n"
     )
 
-    config = update_config({"notes_dir": "~/custom-notes", "whisper_model": "small"}, path)
+    config = update_config({"notes_dir": "~/custom-notes", "capture_microphone": False}, path)
 
     assert str(config.notes_dir).endswith("custom-notes")
-    assert config.whisper_model == "small"
+    assert config.capture_microphone is False
     assert config.ai_provider == "claude"  # untouched
     assert config.ai_model == "claude-sonnet-5"  # untouched, not a supported update key
 
@@ -79,7 +76,7 @@ def test_update_config_persists_to_disk(tmp_path):
 
     path = tmp_path / "config.yaml"
     path.write_text(
-        "notes_dir: ~/notetaker-notes\nwhisper_model: base.en\nai_provider: claude\n"
+        "notes_dir: ~/notetaker-notes\nai_provider: claude\n"
         "ai_model: claude-sonnet-5\napi_key_env: ANTHROPIC_API_KEY\n"
     )
 
@@ -94,7 +91,7 @@ def test_update_config_rejects_invalid_value_without_writing_the_file(tmp_path):
 
     path = tmp_path / "config.yaml"
     original_text = (
-        "notes_dir: ~/notetaker-notes\nwhisper_model: base.en\nai_provider: claude\n"
+        "notes_dir: ~/notetaker-notes\nai_provider: claude\n"
         "ai_model: claude-sonnet-5\napi_key_env: ANTHROPIC_API_KEY\n"
     )
     path.write_text(original_text)
@@ -133,7 +130,7 @@ def test_update_config_switching_provider_resets_model_to_provider_default(tmp_p
 
     path = tmp_path / "config.yaml"
     path.write_text(
-        "notes_dir: ~/n\nwhisper_model: base.en\nai_provider: claude\n"
+        "notes_dir: ~/n\nai_provider: claude\n"
         "ai_model: claude-sonnet-5\napi_key_env: ANTHROPIC_API_KEY\n"
     )
 
@@ -154,26 +151,24 @@ def test_default_config_is_fully_on_device_and_records_microphone(tmp_path):
     assert config.ai_provider == "apple_local"
     assert config.ai_model == "apple-foundationmodel"
     assert config.capture_microphone is True
-    assert config.whisper_model_path is None
 
 
-def test_load_config_reads_optional_offline_and_mic_keys(tmp_path):
+def test_load_config_reads_optional_mic_key(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(
-        "notes_dir: ~/n\nwhisper_model: base.en\nai_provider: apple_local\nai_model: m\napi_key_env: K\n"
-        "whisper_model_path: /models/base.en\ncapture_microphone: false\n"
+        "notes_dir: ~/n\nai_provider: apple_local\nai_model: m\napi_key_env: K\n"
+        "capture_microphone: false\n"
     )
 
     config = load_config(path)
 
-    assert config.whisper_model_path == "/models/base.en"
     assert config.capture_microphone is False
 
 
 def test_load_config_rejects_non_boolean_capture_microphone(tmp_path):
     path = tmp_path / "config.yaml"
     path.write_text(
-        "notes_dir: ~/n\nwhisper_model: base.en\nai_provider: apple_local\nai_model: m\napi_key_env: K\n"
+        "notes_dir: ~/n\nai_provider: apple_local\nai_model: m\napi_key_env: K\n"
         "capture_microphone: maybe\n"
     )
     with pytest.raises(ConfigError, match="capture_microphone"):
@@ -195,19 +190,19 @@ def test_update_config_validates_full_config_not_just_changed_keys(tmp_path):
 
     path = tmp_path / "config.yaml"
     path.write_text(
-        "notes_dir: ~/notetaker-notes\nwhisper_model: base.en\nai_provider: already-bogus\n"
+        "notes_dir: ~/notetaker-notes\nai_provider: already-bogus\n"
         "ai_model: claude-sonnet-5\napi_key_env: ANTHROPIC_API_KEY\n"
     )
 
     with pytest.raises(ConfigError, match="Unknown ai_provider"):
-        update_config({"whisper_model": "small"}, path)
+        update_config({"capture_microphone": False}, path)
 
 
 def test_update_config_raises_when_file_missing(tmp_path):
     from notetaker.config import update_config
 
     with pytest.raises(ConfigError):
-        update_config({"whisper_model": "small"}, tmp_path / "missing.yaml")
+        update_config({"capture_microphone": False}, tmp_path / "missing.yaml")
 
 
 def test_update_config_raises_on_malformed_yaml(tmp_path):
@@ -217,7 +212,7 @@ def test_update_config_raises_on_malformed_yaml(tmp_path):
     path.write_text("notes_dir: [unclosed\n")
 
     with pytest.raises(ConfigError, match="not valid YAML"):
-        update_config({"whisper_model": "small"}, path)
+        update_config({"capture_microphone": False}, path)
 
 
 def test_load_config_raises_on_malformed_yaml(tmp_path):

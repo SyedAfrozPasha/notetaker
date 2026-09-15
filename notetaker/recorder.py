@@ -5,6 +5,8 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 import wave
 from enum import Enum
 from pathlib import Path
@@ -12,9 +14,17 @@ from pathlib import Path
 import numpy as np
 import sounddevice as sd
 
-from notetaker.transcriber import ME_CHANNEL, OTHERS_CHANNEL, Transcriber, append_transcript_line, read_wav_channels
+from notetaker.transcriber import (
+    ME_CHANNEL,
+    OHR_HEALTH_URL,
+    OHR_PORT,
+    OTHERS_CHANNEL,
+    Transcriber,
+    append_transcript_line,
+    read_wav_channels,
+)
 
-SAMPLE_RATE = 16000  # what Whisper wants; CoreAudio resamples every device to it
+SAMPLE_RATE = 16000  # what SpeechAnalyzer/ohr wants; CoreAudio resamples every device to it
 SILENCE_PEAK = 200  # int16 peak below which a channel is treated as silent
 SILENT_CHUNKS_BEFORE_WARNING = 3  # BlackHole: a Multi-Output Device carries audio from the first second
 SILENT_CHUNKS_BEFORE_WARNING_TAP = 18  # tap: nothing arrives until an app plays, so wait ~3 min before doubting permission
@@ -247,6 +257,43 @@ def _channel_peaks(wav_path: Path) -> list[int] | None:
     return [int(np.abs(c).max() * 32768) if len(c) else 0 for c in channels]
 
 
+def start_ohr_server(timeout_seconds: float = 15.0) -> subprocess.Popen:
+    """Spawns `ohr --serve` on OHR_PORT (see transcriber.OHR_PORT for why a
+    non-default port — apfel already uses ohr's own default) and waits for
+    it to report healthy before returning, so the Transcriber's first
+    request never races the server's startup. Scoped to this session: there
+    is no brew-services-managed ohr process (its formula has no service
+    block), so the recorder owns spawning and tearing it down."""
+    proc = subprocess.Popen(
+        ["ohr", "--serve", "--port", str(OHR_PORT), "--host", "127.0.0.1"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if proc.poll() is not None:
+            raise RuntimeError(f"ohr --serve exited immediately (code {proc.returncode})")
+        try:
+            with urllib.request.urlopen(OHR_HEALTH_URL, timeout=1):
+                return proc
+        except urllib.error.URLError:
+            pass
+        if time.monotonic() >= deadline:
+            proc.terminate()
+            raise RuntimeError(f"ohr --serve did not become healthy within {timeout_seconds}s")
+        time.sleep(0.2)
+
+
+def stop_ohr_server(proc: subprocess.Popen) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+
+
 def run_recorder(
     session_dir: Path,
     transcriber: Transcriber,
@@ -341,8 +388,6 @@ def _parse_args(argv: list[str]):
 
     parser = argparse.ArgumentParser(prog="notetaker.recorder")
     parser.add_argument("--session-dir", required=True)
-    parser.add_argument("--model", required=True, help="faster-whisper model size")
-    parser.add_argument("--model-path", default="", help="local model dir (offline); overrides --model")
     parser.add_argument("--mic", default="default", help="'default' (macOS default input) or 'none'")
     parser.add_argument("--system-audio", choices=["tap", "blackhole"], default="tap")
     parser.add_argument("--system-device", type=int, default=None, help="BlackHole device index (blackhole mode)")
@@ -357,6 +402,9 @@ def main(argv: list[str]) -> int:
     session_dir = Path(args.session_dir)
     transcript_path = session_dir / "transcript.txt"
     mic = None if args.mic == "none" else args.mic
+
+    # Spawned before the tap/capture so a failure to start leaves nothing else to tear down.
+    ohr_proc = start_ohr_server()
 
     tap = None
     if args.system_audio == "tap":
@@ -389,7 +437,7 @@ def main(argv: list[str]) -> int:
     try:
         run_recorder(
             session_dir,
-            Transcriber(args.model, model_path=args.model_path or None),
+            Transcriber(),
             capture.capture_chunk,
             no_meeting_audio_warning=warning,
             silent_chunks_before_warning=silent_chunks,
@@ -400,6 +448,7 @@ def main(argv: list[str]) -> int:
         traceback.print_exc()
         exit_code = 1
     finally:
+        stop_ohr_server(ohr_proc)
         if tap is not None:
             # Destroy the tap's devices while the PortAudio streams are still
             # running, then leave without stopping them: Pa_StopStream on the

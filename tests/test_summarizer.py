@@ -258,7 +258,7 @@ def test_get_provider_claude_reads_env_key(monkeypatch):
     monkeypatch.setattr("notetaker.summarizer.get_provider_credential", lambda key: None)
     monkeypatch.setenv("MY_KEY", "secret")
     config = Config(
-        notes_dir=None, whisper_model="base.en", ai_provider="claude",
+        notes_dir=None, ai_provider="claude",
         ai_model="claude-sonnet-5", api_key_env="MY_KEY",
     )
     provider = get_provider(config)
@@ -269,7 +269,7 @@ def test_get_provider_claude_reads_keychain_credential(monkeypatch):
     monkeypatch.setattr("notetaker.summarizer.get_provider_credential", lambda key: "sk-ant-from-keychain")
     monkeypatch.delenv("MY_KEY", raising=False)
     config = Config(
-        notes_dir=None, whisper_model="base.en", ai_provider="claude",
+        notes_dir=None, ai_provider="claude",
         ai_model="claude-sonnet-5", api_key_env="MY_KEY",
     )
     provider = get_provider(config)
@@ -280,7 +280,7 @@ def test_get_provider_claude_missing_env_key_raises(monkeypatch):
     monkeypatch.setattr("notetaker.summarizer.get_provider_credential", lambda key: None)
     monkeypatch.delenv("MISSING_KEY", raising=False)
     config = Config(
-        notes_dir=None, whisper_model="base.en", ai_provider="claude",
+        notes_dir=None, ai_provider="claude",
         ai_model="claude-sonnet-5", api_key_env="MISSING_KEY",
     )
     with pytest.raises(ConfigError):
@@ -296,7 +296,7 @@ def test_get_provider_claude_degrades_to_env_key_when_keychain_raises(monkeypatc
     monkeypatch.setattr("notetaker.summarizer.get_provider_credential", raise_keyring_error)
     monkeypatch.setenv("MY_KEY", "secret")
     config = Config(
-        notes_dir=None, whisper_model="base.en", ai_provider="claude",
+        notes_dir=None, ai_provider="claude",
         ai_model="claude-sonnet-5", api_key_env="MY_KEY",
     )
     provider = get_provider(config)
@@ -305,7 +305,7 @@ def test_get_provider_claude_degrades_to_env_key_when_keychain_raises(monkeypatc
 
 def test_get_provider_apple_local():
     config = Config(
-        notes_dir=None, whisper_model="base.en", ai_provider="apple_local",
+        notes_dir=None, ai_provider="apple_local",
         ai_model="apple-foundationmodel", api_key_env="UNUSED",
     )
     assert isinstance(get_provider(config), AppleLocalProvider)

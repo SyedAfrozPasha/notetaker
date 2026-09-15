@@ -38,7 +38,7 @@ def test_index_page_loads_vendored_htmx_not_a_cdn(client):
 
 
 def _config(tmp_path):
-    return Config(tmp_path / "notes", "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
+    return Config(tmp_path / "notes", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
 
 
 def test_status_shows_idle_state_with_start_form(client, monkeypatch, tmp_path):
@@ -1052,7 +1052,6 @@ def test_settings_page_shows_current_config_and_masked_credential(client, monkey
 
     assert response.status_code == 200
     assert "sk-ant••••1234" in response.text
-    assert 'value="tiny"' in response.text
     assert '<option value="claude" selected>' in response.text
 
 
@@ -1096,10 +1095,8 @@ def test_settings_update_config_saves_and_redirects(client, monkeypatch, tmp_pat
         "/settings/config",
         data={
             "notes_dir": "/new/notes",
-            "whisper_model": "small",
             "ai_provider": "apple_local",
             "ai_model": "apple-foundationmodel",
-            "whisper_model_path": "/models/small.en",
             "capture_microphone": "on",
             "system_audio": "tap",
             "tap_process": "com.microsoft.teams2",
@@ -1111,10 +1108,8 @@ def test_settings_update_config_saves_and_redirects(client, monkeypatch, tmp_pat
     assert response.headers["location"] == "/settings"
     assert calls == {
         "notes_dir": "/new/notes",
-        "whisper_model": "small",
         "ai_provider": "apple_local",
         "ai_model": "apple-foundationmodel",
-        "whisper_model_path": "/models/small.en",
         "capture_microphone": True,
         "system_audio": "tap",
         "tap_process": "com.microsoft.teams2",
@@ -1133,13 +1128,12 @@ def test_settings_update_config_shows_error_and_preserves_submitted_values_on_fa
 
     response = client.post(
         "/settings/config",
-        data={"notes_dir": "/attempted/notes", "whisper_model": "small", "ai_provider": "bogus"},
+        data={"notes_dir": "/attempted/notes", "ai_provider": "bogus"},
     )
 
     assert response.status_code == 200
     assert "Unknown ai_provider" in response.text
     assert 'value="/attempted/notes"' in response.text
-    assert 'value="small"' in response.text
 
 
 def test_settings_update_config_shows_setup_error_when_config_missing(client, monkeypatch, tmp_path):
@@ -1152,7 +1146,7 @@ def test_settings_update_config_shows_setup_error_when_config_missing(client, mo
 
     response = client.post(
         "/settings/config",
-        data={"notes_dir": "/x", "whisper_model": "tiny", "ai_provider": "claude"},
+        data={"notes_dir": "/x", "ai_provider": "claude"},
     )
 
     assert response.status_code == 200

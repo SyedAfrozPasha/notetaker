@@ -43,7 +43,7 @@ from notetaker.recorder import (
 )
 from notetaker.systemaudio import tap_support_problem
 from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript, validate_claude_api_key
-from notetaker.transcriber import Transcriber
+from notetaker.transcriber import check_ohr_preflight
 
 SESSION_FILE_NAME = "current_session.json"
 
@@ -175,8 +175,6 @@ def start_session(title: str, config: Config, config_dir: Path, tags: list[str] 
                 "-m",
                 "notetaker.recorder",
                 "--session-dir", str(session_dir),
-                "--model", config.whisper_model,
-                "--model-path", config.whisper_model_path or "",
                 "--mic", mic_arg,
                 *system_args,
             ],
@@ -532,6 +530,8 @@ class SetupStatus:
     blackhole: BlackHoleStatus
     provider_ready: bool
     provider_problems: list[str]
+    transcription_ready: bool = True
+    transcription_problems: list[str] = field(default_factory=list)
     system_audio: str = "blackhole"  # config.system_audio
     system_audio_problem: str | None = None  # tap mode only: why taps can't be used here
 
@@ -559,6 +559,11 @@ def check_setup(config: Config) -> SetupStatus:
     audio = {"system_audio": config.system_audio}
     if config.system_audio == "tap":
         audio["system_audio_problem"] = tap_support_problem()
+    transcription_problems = check_ohr_preflight()
+    transcription = {
+        "transcription_ready": not transcription_problems,
+        "transcription_problems": transcription_problems,
+    }
     if config.ai_provider == "claude":
         try:
             keychain_credential = get_provider_credential(config.api_key_env)
@@ -572,72 +577,16 @@ def check_setup(config: Config) -> SetupStatus:
                     f"No credential found for {config.api_key_env}. Run `notetaker set-api-key <key>`, "
                     "or export it as an environment variable, then re-run `notetaker init`."
                 ],
+                **transcription,
                 **audio,
             )
-        return SetupStatus(blackhole=blackhole, provider_ready=True, provider_problems=[], **audio)
+        return SetupStatus(blackhole=blackhole, provider_ready=True, provider_problems=[], **transcription, **audio)
     if config.ai_provider == "apple_local":
         problems = check_apple_local_preflight()
-        return SetupStatus(blackhole=blackhole, provider_ready=not problems, provider_problems=problems, **audio)
+        return SetupStatus(
+            blackhole=blackhole, provider_ready=not problems, provider_problems=problems, **transcription, **audio
+        )
     raise ServiceError(f"Unknown ai_provider '{config.ai_provider}'.")
-
-
-def download_model(*args, **kwargs):
-    """Lazy `faster_whisper.download_model` — see transcriber.WhisperModel for
-    why faster-whisper is not imported at module load."""
-    from faster_whisper import download_model as _download_model
-
-    return _download_model(*args, **kwargs)
-
-
-def whisper_model_is_cached(config: Config) -> bool:
-    """Whether `ensure_whisper_model` can finish without fetching from Hugging
-    Face — i.e. the named model is already in the local cache."""
-    if config.whisper_model_path:
-        return True
-    try:
-        download_model(config.whisper_model, local_files_only=True)
-    except Exception:
-        return False
-    return True
-
-
-def _download_error(config: Config, exc: Exception) -> ServiceError:
-    return ServiceError(
-        f"could not download the Whisper model '{config.whisper_model}' from Hugging Face: {exc}. "
-        "If this machine cannot reach huggingface.co, copy a faster-whisper model directory from another "
-        "machine (e.g. ~/.cache/huggingface/hub/models--Systran--faster-whisper-base.en/snapshots/<id>/) "
-        "and set whisper_model_path in ~/.notetaker/config.yaml to that directory."
-    )
-
-
-def ensure_whisper_model(config: Config, on_phase: Callable[[str], None] | None = None) -> None:
-    """Loads (and on first run downloads) the Whisper model, reporting each
-    phase through `on_phase` so the UI can show what it is waiting on — the
-    download is a one-time multi-hundred-MB fetch that faster-whisper runs
-    silently. On a machine that cannot reach Hugging Face the download is
-    the step that fails, so the error points at the offline alternative."""
-    report = on_phase or (lambda phase: None)
-    if config.whisper_model_path:
-        report(f"Loading Whisper model from '{config.whisper_model_path}'...")
-    elif whisper_model_is_cached(config):
-        report(f"Loading Whisper model '{config.whisper_model}' (already downloaded)...")
-    else:
-        report(f"Downloading Whisper model '{config.whisper_model}' from Hugging Face (one-time)...")
-        try:
-            download_model(config.whisper_model)
-        except Exception as exc:
-            raise _download_error(config, exc) from exc
-        report(f"Loading Whisper model '{config.whisper_model}'...")
-    try:
-        Transcriber(config.whisper_model, model_path=config.whisper_model_path)
-    except Exception as exc:
-        if config.whisper_model_path:
-            raise ServiceError(
-                f"could not load the Whisper model from whisper_model_path '{config.whisper_model_path}': {exc}. "
-                "It must be a faster-whisper (CTranslate2) model directory containing model.bin, config.json, "
-                "tokenizer.json and vocabulary.txt."
-            ) from exc
-        raise _download_error(config, exc) from exc
 
 
 def check_and_salvage_orphan(config: Config, config_dir: Path) -> Path | None:

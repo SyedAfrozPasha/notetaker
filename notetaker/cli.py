@@ -1,7 +1,6 @@
 import typer
 from rich.console import Console
 from rich.markup import escape
-from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from notetaker import service
 from notetaker.config import CONFIG_DIR, CONFIG_PATH, ConfigError, load_config
@@ -56,6 +55,12 @@ def init():
     else:
         typer.echo("BlackHole is installed and active.")
 
+    if not status.transcription_ready:
+        for problem in status.transcription_problems:
+            typer.echo(f"error: {problem}", err=True)
+        raise typer.Exit(1)
+    typer.echo("ohr is installed (SpeechAnalyzer transcription).")
+
     if not status.provider_ready:
         for problem in status.provider_problems:
             typer.echo(f"error: {problem}", err=True)
@@ -65,36 +70,6 @@ def init():
         typer.echo(f"{config.api_key_env} is set.")
     elif config.ai_provider == "apple_local":
         typer.echo("apfel is installed and running.")
-
-    # The model download is a one-time multi-hundred-MB fetch that produces
-    # no output of its own, so show which phase is running and for how long.
-    phases = []
-
-    def on_phase(phase: str) -> None:
-        phases.append(phase)
-        progress.update(task, description=escape(phase))
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("{task.description}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True,
-    ) as progress:
-        task = progress.add_task("Preparing Whisper model...", total=None)
-        try:
-            service.ensure_whisper_model(config, on_phase=on_phase)
-        except ServiceError as exc:
-            model_error = str(exc)
-        else:
-            model_error = None
-        elapsed = progress.tasks[0].elapsed or 0.0
-    for phase in phases:
-        typer.echo(phase)
-    if model_error is not None:
-        typer.echo(f"error: {model_error}", err=True)
-        raise typer.Exit(1)
-    typer.echo(f"Whisper model ready ({elapsed:.0f}s).")
 
 
 @app.command()

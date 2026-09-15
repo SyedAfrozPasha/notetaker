@@ -12,7 +12,7 @@ runner = CliRunner()
 
 
 def _config(tmp_path):
-    return Config(tmp_path / "notes", "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
+    return Config(tmp_path / "notes", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
 
 
 def test_init_writes_config_and_reports_blackhole_active(monkeypatch, tmp_path):
@@ -22,60 +22,29 @@ def test_init_writes_config_and_reports_blackhole_active(monkeypatch, tmp_path):
         "notetaker.cli.service.check_setup",
         lambda config: SetupStatus(BlackHoleStatus.ACTIVE, True, []),
     )
-    monkeypatch.setattr("notetaker.cli.service.ensure_whisper_model", lambda config, on_phase=None: None)
 
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
     assert "BlackHole is installed and active" in result.output
+    assert "ohr is installed" in result.output
     assert "ANTHROPIC_API_KEY is set." in result.output
-    assert "Whisper model ready" in result.output
 
 
-def test_init_shows_each_whisper_model_phase_and_the_elapsed_time(monkeypatch, tmp_path):
+def test_init_fails_when_transcription_not_ready(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.cli.service.initialize_config", lambda path: False)
     monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "notetaker.cli.service.check_setup",
-        lambda config: SetupStatus(BlackHoleStatus.ACTIVE, True, []),
+        lambda config: SetupStatus(
+            BlackHoleStatus.ACTIVE, True, [], transcription_ready=False, transcription_problems=["ohr is not installed."]
+        ),
     )
-
-    def fake_ensure(config, on_phase=None):
-        on_phase("Downloading Whisper model 'tiny' from Hugging Face (one-time)...")
-        on_phase("Loading Whisper model 'tiny'...")
-
-    monkeypatch.setattr("notetaker.cli.service.ensure_whisper_model", fake_ensure)
-
-    result = runner.invoke(app, ["init"])
-
-    assert result.exit_code == 0
-    out = result.output
-    assert "Downloading Whisper model 'tiny'" in out
-    assert "Loading Whisper model 'tiny'" in out
-    assert out.index("Downloading") < out.index("Loading Whisper")
-    assert "Whisper model ready (" in out
-
-
-def test_init_reports_whisper_model_error_after_the_phase_it_failed_in(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.cli.service.initialize_config", lambda path: False)
-    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
-    monkeypatch.setattr(
-        "notetaker.cli.service.check_setup",
-        lambda config: SetupStatus(BlackHoleStatus.ACTIVE, True, []),
-    )
-
-    def fake_ensure(config, on_phase=None):
-        on_phase("Downloading Whisper model 'tiny' from Hugging Face (one-time)...")
-        raise ServiceError("could not download the Whisper model 'tiny' from Hugging Face: offline")
-
-    monkeypatch.setattr("notetaker.cli.service.ensure_whisper_model", fake_ensure)
 
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 1
-    assert "Downloading Whisper model 'tiny'" in result.output
-    assert "error: could not download" in result.output
-    assert "Whisper model ready" not in result.output
+    assert "error: ohr is not installed." in result.output
 
 
 def test_init_fails_when_provider_not_ready(monkeypatch, tmp_path):

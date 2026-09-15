@@ -102,7 +102,7 @@ def test_run_recorder_continues_when_one_chunk_fails_to_transcribe(tmp_path):
         def transcribe_chunk(self, wav_path, elapsed_seconds):
             self.calls += 1
             if self.calls == 2:
-                raise RuntimeError("ctranslate2 hiccup")
+                raise RuntimeError("ohr hiccup")
             return f"[{int(elapsed_seconds):02d}] line {self.calls}"
 
     run_recorder(session_dir, transcriber=FlakyTranscriber(), chunk_seconds=10, capture_fn=fake_capture)
@@ -375,23 +375,27 @@ def test_main_tap_mode_creates_tap_resolves_device_and_closes_everything(monkeyp
 
     captures = []
     monkeypatch.setattr(recorder, "LiveCapture", lambda *a, **k: captures.append(FakeCapture(*a, **k)) or captures[-1])
-    monkeypatch.setattr(recorder, "Transcriber", lambda model, model_path=None: events.append(("model", model, model_path)))
+    monkeypatch.setattr(recorder, "Transcriber", lambda: events.append("model"))
+    monkeypatch.setattr(recorder, "start_ohr_server", lambda: events.append("ohr_start") or "OHRPROC")
+    monkeypatch.setattr(recorder, "stop_ohr_server", lambda proc: events.append(("ohr_stop", proc)))
     monkeypatch.setattr(
         recorder, "run_recorder",
         lambda *a, **k: events.append(("run", k["no_meeting_audio_warning"], k["silent_chunks_before_warning"])),
     )
 
     recorder.main([
-        "--session-dir", str(tmp_path), "--model", "base.en", "--mic", "default",
+        "--session-dir", str(tmp_path), "--mic", "default",
         "--system-audio", "tap", "--tap-process", "com.microsoft.teams2",
     ])
 
     assert events == [
+        "ohr_start",  # spawned before the tap so a failure to start leaves nothing else to tear down
         ("tap", "com.microsoft.teams2"),
         ("index", "notetaker-system-audio"),
         ("capture", 4, "default"),
-        ("model", "base.en", None),
+        "model",
         ("run", recorder.NO_MEETING_AUDIO_WARNING_TAP, recorder.SILENT_CHUNKS_BEFORE_WARNING_TAP),
+        ("ohr_stop", "OHRPROC"),
         "tap.close",  # destroyed before any stream stop, then hard exit (see recorder.main)
         ("hard_exit", 0),
     ]
@@ -423,11 +427,13 @@ def test_main_blackhole_mode_uses_given_device_and_no_tap(monkeypatch, tmp_path)
             pass
 
     monkeypatch.setattr(recorder, "LiveCapture", FakeCapture)
-    monkeypatch.setattr(recorder, "Transcriber", lambda model, model_path=None: None)
+    monkeypatch.setattr(recorder, "Transcriber", lambda: None)
+    monkeypatch.setattr(recorder, "start_ohr_server", lambda: "OHRPROC")
+    monkeypatch.setattr(recorder, "stop_ohr_server", lambda proc: None)
     monkeypatch.setattr(recorder, "run_recorder", lambda *a, **k: events.append(("run", k["no_meeting_audio_warning"])))
 
     recorder.main([
-        "--session-dir", str(tmp_path), "--model", "base.en", "--mic", "none",
+        "--session-dir", str(tmp_path), "--mic", "none",
         "--system-audio", "blackhole", "--system-device", "2",
     ])
 
@@ -457,6 +463,130 @@ def test_portaudio_device_index_reenumerates_and_finds_input_device(monkeypatch)
         recorder.portaudio_device_index("nope", timeout_seconds=0)
 
 
+def _fake_health_ctx():
+    class FakeCtx:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    return FakeCtx()
+
+
+def test_start_ohr_server_spawns_and_returns_once_healthy(monkeypatch):
+    from notetaker import recorder
+
+    proc = MagicMock()
+    proc.poll.return_value = None
+    monkeypatch.setattr(recorder.subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(recorder.urllib.request, "urlopen", lambda url, timeout=1: _fake_health_ctx())
+
+    assert recorder.start_ohr_server() is proc
+
+
+def test_start_ohr_server_polls_the_health_endpoint_not_under_v1(monkeypatch):
+    # ohr's health check lives at the server root (GET /health), not under
+    # /v1 like /v1/audio/transcriptions and /v1/models — confirmed against a
+    # real `ohr --serve`: /health -> 200, /v1/health -> 404.
+    from notetaker import recorder
+
+    proc = MagicMock()
+    proc.poll.return_value = None
+    requested_urls = []
+
+    def fake_urlopen(url, timeout=1):
+        requested_urls.append(url)
+        return _fake_health_ctx()
+
+    monkeypatch.setattr(recorder.subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(recorder.urllib.request, "urlopen", fake_urlopen)
+
+    recorder.start_ohr_server()
+
+    assert requested_urls == [f"http://127.0.0.1:{recorder.OHR_PORT}/health"]
+
+
+def test_start_ohr_server_retries_health_check_until_ready(monkeypatch):
+    from notetaker import recorder
+
+    proc = MagicMock()
+    proc.poll.return_value = None
+    attempts = iter([recorder.urllib.error.URLError("refused"), recorder.urllib.error.URLError("refused"), None])
+
+    def fake_urlopen(url, timeout=1):
+        outcome = next(attempts)
+        if outcome is not None:
+            raise outcome
+        return _fake_health_ctx()
+
+    monkeypatch.setattr(recorder.subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(recorder.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(recorder.time, "sleep", lambda s: None)
+
+    assert recorder.start_ohr_server() is proc
+
+
+def test_start_ohr_server_raises_when_process_exits_immediately(monkeypatch):
+    from notetaker import recorder
+
+    proc = MagicMock()
+    proc.poll.return_value = 1
+    proc.returncode = 1
+    monkeypatch.setattr(recorder.subprocess, "Popen", lambda *a, **k: proc)
+
+    with pytest.raises(RuntimeError, match="exited"):
+        recorder.start_ohr_server()
+
+
+def test_start_ohr_server_raises_and_terminates_when_never_healthy(monkeypatch):
+    from notetaker import recorder
+
+    proc = MagicMock()
+    proc.poll.return_value = None
+    monkeypatch.setattr(recorder.subprocess, "Popen", lambda *a, **k: proc)
+    monkeypatch.setattr(
+        recorder.urllib.request, "urlopen", lambda url, timeout=1: (_ for _ in ()).throw(recorder.urllib.error.URLError("refused"))
+    )
+    monkeypatch.setattr(recorder.time, "sleep", lambda s: None)
+
+    with pytest.raises(RuntimeError, match="did not become healthy"):
+        recorder.start_ohr_server(timeout_seconds=0)
+    proc.terminate.assert_called_once()
+
+
+def test_stop_ohr_server_does_nothing_if_already_exited(monkeypatch):
+    from notetaker import recorder
+
+    proc = MagicMock()
+    proc.poll.return_value = 0
+    recorder.stop_ohr_server(proc)
+    proc.terminate.assert_not_called()
+
+
+def test_stop_ohr_server_terminates_running_process(monkeypatch):
+    from notetaker import recorder
+
+    proc = MagicMock()
+    proc.poll.return_value = None
+    recorder.stop_ohr_server(proc)
+    proc.terminate.assert_called_once()
+    proc.kill.assert_not_called()
+
+
+def test_stop_ohr_server_kills_if_terminate_does_not_finish_in_time(monkeypatch):
+    import subprocess as sp
+
+    from notetaker import recorder
+
+    proc = MagicMock()
+    proc.poll.return_value = None
+    proc.wait.side_effect = sp.TimeoutExpired(cmd="ohr", timeout=5)
+    recorder.stop_ohr_server(proc)
+    proc.terminate.assert_called_once()
+    proc.kill.assert_called_once()
+
+
 def test_main_tap_mode_hard_exits_nonzero_when_recording_crashes(monkeypatch, tmp_path):
     from notetaker import recorder
 
@@ -478,12 +608,14 @@ def test_main_tap_mode_hard_exits_nonzero_when_recording_crashes(monkeypatch, tm
             events.append("capture.close")
 
     monkeypatch.setattr(recorder, "LiveCapture", FakeCapture)
-    monkeypatch.setattr(recorder, "Transcriber", lambda model, model_path=None: None)
+    monkeypatch.setattr(recorder, "Transcriber", lambda: None)
+    monkeypatch.setattr(recorder, "start_ohr_server", lambda: "OHRPROC")
+    monkeypatch.setattr(recorder, "stop_ohr_server", lambda proc: events.append(("ohr_stop", proc)))
     monkeypatch.setattr(recorder, "run_recorder", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
 
-    recorder.main(["--session-dir", str(tmp_path), "--model", "base.en", "--system-audio", "tap"])
+    recorder.main(["--session-dir", str(tmp_path), "--system-audio", "tap"])
 
-    assert events == ["tap.close", ("hard_exit", 1)]
+    assert events == [("ohr_stop", "OHRPROC"), "tap.close", ("hard_exit", 1)]
 
 
 def test_live_capture_aligns_late_starting_source_with_leading_silence(monkeypatch):

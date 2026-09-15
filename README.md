@@ -1,7 +1,8 @@
 # notetaker
 
 Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally with
-`faster-whisper`, and saves an AI-generated summary as a Markdown note. macOS only.
+Apple's on-device SpeechAnalyzer (via [`ohr`](https://github.com/Arthur-Ficial/ohr)), and
+saves an AI-generated summary as a Markdown note. macOS only.
 
 ## Setup
 
@@ -51,11 +52,25 @@ Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally 
    ./install.sh
    ```
 
-   `install.sh` requires Python 3.10 or 3.11 (not 3.12/3.13 — `faster-whisper`'s PyAV
-   dependency doesn't reliably build there) and will tell you clearly if your `python3`
+   `install.sh` requires Python 3.10 or 3.11 and will tell you clearly if your `python3`
    doesn't qualify.
 
-4. Set your AI provider (the default config is fully on-device — nothing leaves your Mac):
+4. **Transcription** runs on Apple's on-device SpeechAnalyzer, reached via
+   [`ohr`](https://github.com/Arthur-Ficial/ohr) (same author and install pattern as
+   `apfel` below). Install it:
+
+   ```bash
+   brew tap Arthur-Ficial/tap
+   brew install Arthur-Ficial/tap/ohr
+   ```
+
+   Requires macOS 26+ and Apple Silicon. Unlike `apfel`, there's no `brew services start` —
+   `notetaker start` spawns and tears down its own `ohr --serve` process for the duration
+   of each recording, on a fixed port distinct from `apfel`'s. The speech model ships with
+   macOS itself, so there is nothing to download and no Hugging Face (or any other network)
+   access required.
+
+5. Set your AI provider (the default config is fully on-device — nothing leaves your Mac):
    - **Apple Foundation Models (default, fully local, no API key):** install
      [`apfel`](https://github.com/Arthur-Ficial/apfel) (`brew install apfel`) and start it
      as a background service (`brew services start apfel`). Requires macOS 26+, Apple
@@ -67,7 +82,7 @@ Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally 
      switches the model for you), then either run `notetaker set-api-key` (stores it in the
      macOS Keychain — recommended) or export `ANTHROPIC_API_KEY` in your shell profile.
 
-5. Run setup checks and download the transcription model:
+6. Run setup checks:
 
    ```bash
    notetaker init
@@ -148,12 +163,11 @@ run one `notetaker start`/`stop` from Terminal first.
 - **Meeting audio needs no install** in the default tap mode. If an MDM profile denies
   "System Audio Recording", the fallback is BlackHole (`brew install blackhole-2ch`, a cask
   that runs a `.pkg` installer and needs an administrator password).
-- **The Whisper model** is normally downloaded from huggingface.co on `notetaker init`.
-  If that host is blocked, copy a faster-whisper model directory from another machine
-  (e.g. `~/.cache/huggingface/hub/models--Systran--faster-whisper-base.en/snapshots/<id>/`,
-  which contains `model.bin`, `config.json`, `tokenizer.json`, `vocabulary.txt`) to the
-  locked-down Mac and set `whisper_model_path: /path/to/that/dir` in
-  `~/.notetaker/config.yaml`. `notetaker init` then loads it with no network access.
+- **Transcription needs no download.** SpeechAnalyzer's speech model ships with macOS
+  itself — only the `ohr` binary needs installing via Homebrew (step 4 above), which is
+  exactly what this project switched to: `faster-whisper`'s Hugging Face model download
+  used to be the thing a locked-down machine couldn't reach; SpeechAnalyzer has no such
+  step. See `docs/adr/0005-speechanalyzer-via-ohr-replaces-faster-whisper.md`.
 - **`./install.sh`** uses `pip` against PyPI; it needs the same proxy access your other
   Python tooling has.
 - With the default `apple_local` provider no cloud service is contacted at any point.

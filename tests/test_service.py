@@ -47,7 +47,7 @@ def _config(tmp_path, **overrides):
     # path explicitly. Tap-mode tests pass system_audio="tap".
     fields = dict(system_audio="blackhole")
     fields.update(overrides)
-    return Config(tmp_path / "notes", "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY", **fields)
+    return Config(tmp_path / "notes", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY", **fields)
 
 
 def test_start_session_fails_when_blackhole_not_active(monkeypatch, tmp_path):
@@ -112,7 +112,7 @@ def test_start_session_writes_session_file_and_spawns_recorder(monkeypatch, tmp_
     assert info.warnings == []
     assert captured_cmd["cmd"] == [
         sys.executable, "-m", "notetaker.recorder",
-        "--session-dir", str(info.session_dir), "--model", "tiny", "--model-path", "", "--mic", "default",
+        "--session-dir", str(info.session_dir), "--mic", "default",
         "--system-audio", "blackhole", "--system-device", "2",
     ]
     session = json.loads((tmp_path / "current_session.json").read_text())
@@ -238,7 +238,7 @@ def test_stop_session_merges_session_tags_before_provider_tags(monkeypatch, tmp_
     )
 
     note_path = stop_session(
-        info, Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+        info, Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
     )
 
     assert parse_note_meta(note_path).tags == ["user-tag", "ai-tag"]
@@ -262,7 +262,7 @@ def test_stop_session_dedupes_tags_the_provider_also_produced(monkeypatch, tmp_p
     )
 
     note_path = stop_session(
-        info, Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+        info, Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
     )
 
     # Session tags are merged in FIRST, so "shared-tag" must move to the front
@@ -286,7 +286,7 @@ def test_stop_session_leaves_provider_tags_alone_when_no_session_tags(monkeypatc
     info = SessionInfo(999999, "Standup", datetime(2026, 9, 11, 10, 0), session_dir)  # no tags — defaults to []
 
     note_path = stop_session(
-        info, Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+        info, Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
     )
 
     assert parse_note_meta(note_path).tags == ["ai-tag-a", "ai-tag-b"]
@@ -306,7 +306,7 @@ def test_stop_session_skips_provider_call_when_transcript_empty(monkeypatch, tmp
     monkeypatch.setattr("notetaker.service.get_provider", fail_if_called)
     monkeypatch.setattr("notetaker.service.summarize_transcript", fail_if_called)
 
-    note_path = stop_session(_session_info(session_dir), Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path)
+    note_path = stop_session(_session_info(session_dir), Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path)
 
     assert "No audio was captured" in note_path.read_text()
     assert not session_dir.exists()
@@ -326,7 +326,7 @@ def test_stop_session_salvages_transcript_and_writes_note(monkeypatch, tmp_path)
         lambda transcript, provider, **kwargs: Summary(text="summary text", action_items=["a"], tags=["t"]),
     )
 
-    note_path = stop_session(_session_info(session_dir), Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path)
+    note_path = stop_session(_session_info(session_dir), Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path)
 
     assert "summary text" in note_path.read_text()
     assert not session_dir.exists()
@@ -346,7 +346,7 @@ def test_stop_session_saves_note_with_error_when_summarization_fails(monkeypatch
 
     monkeypatch.setattr("notetaker.service.summarize_transcript", raise_error)
 
-    note_path = stop_session(_session_info(session_dir), Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path)
+    note_path = stop_session(_session_info(session_dir), Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path)
 
     text = note_path.read_text()
     assert "Summarization failed" in text
@@ -356,7 +356,7 @@ def test_stop_session_saves_note_with_error_when_summarization_fails(monkeypatch
 def test_list_all_notes_returns_notes_sorted_by_date(tmp_path):
     notes_dir = tmp_path / "notes"
     write_note(notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], ["proj"]), [])
-    metas = list_all_notes(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"))
+    metas = list_all_notes(Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"))
     assert len(metas) == 1
     assert metas[0].title == "Standup"
 
@@ -374,7 +374,7 @@ def test_search_notes_delegates_to_notes_module(tmp_path):
 def test_get_note_body_returns_body_text(tmp_path):
     notes_dir = tmp_path / "notes"
     write_note(notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("Summary text", [], []), ["[00:00:01] hi"])
-    body = get_note_body(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup")
+    body = get_note_body(Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup")
     assert "Summary text" in body
 
 
@@ -382,7 +382,7 @@ def test_get_note_body_raises_for_missing_note(tmp_path):
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
     with pytest.raises(ServiceError, match="no note found"):
-        get_note_body(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "nonexistent")
+        get_note_body(Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "nonexistent")
 
 
 def test_initialize_config_writes_when_missing(tmp_path):
@@ -403,6 +403,7 @@ def test_initialize_config_skips_when_present(tmp_path):
 def test_check_setup_reports_blackhole_and_ready_claude_provider(monkeypatch, tmp_path):
     from notetaker.service import SetupStatus, check_setup
     monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: None)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
     status = check_setup(_config(tmp_path))
@@ -412,6 +413,7 @@ def test_check_setup_reports_blackhole_and_ready_claude_provider(monkeypatch, tm
 def test_check_setup_reports_ready_when_keychain_has_credential(monkeypatch, tmp_path):
     from notetaker.service import SetupStatus, check_setup
     monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: "sk-ant-from-keychain")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     status = check_setup(_config(tmp_path))
@@ -421,6 +423,7 @@ def test_check_setup_reports_ready_when_keychain_has_credential(monkeypatch, tmp
 def test_check_setup_reports_missing_claude_api_key(monkeypatch, tmp_path):
     from notetaker.service import check_setup
     monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: None)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     status = check_setup(_config(tmp_path))
@@ -437,6 +440,7 @@ def test_check_setup_degrades_to_env_var_when_keychain_raises(monkeypatch, tmp_p
         raise KeyringError("Keychain locked")
 
     monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.get_provider_credential", raise_keyring_error)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
     status = check_setup(_config(tmp_path))
@@ -446,99 +450,23 @@ def test_check_setup_degrades_to_env_var_when_keychain_raises(monkeypatch, tmp_p
 def test_check_setup_reports_apple_local_problems(monkeypatch, tmp_path):
     from notetaker.service import check_setup
     monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.check_apple_local_preflight", lambda: ["apfel is not installed"])
-    status = check_setup(Config(tmp_path, "tiny", "apple_local", "apple-foundationmodel", "UNUSED"))
+    status = check_setup(Config(tmp_path, "apple_local", "apple-foundationmodel", "UNUSED"))
     assert status.provider_ready is False
     assert status.provider_problems == ["apfel is not installed"]
 
 
-def test_ensure_whisper_model_loads_transcriber(monkeypatch, tmp_path):
-    from notetaker.service import ensure_whisper_model
-    calls = []
-    monkeypatch.setattr("notetaker.service.whisper_model_is_cached", lambda config: True)
-    monkeypatch.setattr("notetaker.service.Transcriber", lambda model, model_path=None: calls.append((model, model_path)))
-    ensure_whisper_model(_config(tmp_path))
-    assert calls == [("tiny", None)]
-
-
-def test_ensure_whisper_model_explains_offline_alternative_when_download_fails(monkeypatch, tmp_path):
-    from notetaker.service import ensure_whisper_model
-
-    def fail(*args, **kwargs):
-        raise RuntimeError("Connection to huggingface.co timed out")
-
-    monkeypatch.setattr("notetaker.service.whisper_model_is_cached", lambda config: False)
-    monkeypatch.setattr("notetaker.service.download_model", fail)
-    with pytest.raises(ServiceError, match="whisper_model_path"):
-        ensure_whisper_model(_config(tmp_path))
-
-
-def test_ensure_whisper_model_reports_download_then_load_phases_when_not_cached(monkeypatch, tmp_path):
-    from notetaker.service import ensure_whisper_model
-
-    order = []
-    monkeypatch.setattr("notetaker.service.whisper_model_is_cached", lambda config: False)
-    monkeypatch.setattr("notetaker.service.download_model", lambda model: order.append(("download", model)))
-    monkeypatch.setattr(
-        "notetaker.service.Transcriber", lambda model, model_path=None: order.append(("load", model))
-    )
-    phases = []
-
-    ensure_whisper_model(_config(tmp_path), on_phase=phases.append)
-
-    assert order == [("download", "tiny"), ("load", "tiny")]
-    assert len(phases) == 2
-    assert "Downloading" in phases[0] and "tiny" in phases[0]
-    assert "Loading" in phases[1]
-
-
-def test_ensure_whisper_model_skips_download_phase_when_cached(monkeypatch, tmp_path):
-    from notetaker.service import ensure_whisper_model
-
-    monkeypatch.setattr("notetaker.service.whisper_model_is_cached", lambda config: True)
-    monkeypatch.setattr("notetaker.service.download_model", lambda model: pytest.fail("must not download"))
-    monkeypatch.setattr("notetaker.service.Transcriber", lambda model, model_path=None: None)
-    phases = []
-
-    ensure_whisper_model(_config(tmp_path), on_phase=phases.append)
-
-    assert len(phases) == 1
-    assert "Loading" in phases[0] and "already downloaded" in phases[0]
-
-
-def test_ensure_whisper_model_reports_local_path_phase(monkeypatch, tmp_path):
-    from dataclasses import replace
-
-    from notetaker.service import ensure_whisper_model
-
-    config = replace(_config(tmp_path), whisper_model_path=str(tmp_path / "model"))
-    monkeypatch.setattr("notetaker.service.download_model", lambda model: pytest.fail("must not download"))
-    monkeypatch.setattr("notetaker.service.Transcriber", lambda model, model_path=None: None)
-    phases = []
-
-    ensure_whisper_model(config, on_phase=phases.append)
-
-    assert phases == [f"Loading Whisper model from '{tmp_path / 'model'}'..."]
-
-
-def test_whisper_model_is_cached_asks_faster_whisper_for_local_files_only(monkeypatch, tmp_path):
-    from notetaker.service import whisper_model_is_cached
-
-    calls = []
-
-    def fake_download(model, local_files_only=False):
-        calls.append((model, local_files_only))
-        return "/cache/path"
-
-    monkeypatch.setattr("notetaker.service.download_model", fake_download)
-    assert whisper_model_is_cached(_config(tmp_path)) is True
-    assert calls == [("tiny", True)]
-
-    def missing(model, local_files_only=False):
-        raise FileNotFoundError("not in cache")
-
-    monkeypatch.setattr("notetaker.service.download_model", missing)
-    assert whisper_model_is_cached(_config(tmp_path)) is False
+def test_check_setup_reports_ohr_problems_regardless_of_ai_provider(monkeypatch, tmp_path):
+    from notetaker.service import check_setup
+    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: ["ohr is not installed"])
+    monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: None)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
+    status = check_setup(_config(tmp_path))
+    assert status.transcription_ready is False
+    assert status.transcription_problems == ["ohr is not installed"]
+    assert status.provider_ready is True  # independent of the AI-summarization provider check
 
 
 def test_stop_session_writes_transcript_sidecar_alongside_note(monkeypatch, tmp_path):
@@ -556,7 +484,7 @@ def test_stop_session_writes_transcript_sidecar_alongside_note(monkeypatch, tmp_
 
     note_path = stop_session(
         _session_info(session_dir),
-        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+        Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
         tmp_path,
     )
 
@@ -574,7 +502,7 @@ def test_stop_session_writes_empty_transcript_sidecar_when_no_audio(monkeypatch,
 
     note_path = stop_session(
         _session_info(session_dir),
-        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+        Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
         tmp_path,
     )
 
@@ -627,7 +555,7 @@ def test_check_and_salvage_orphan_salvages_dead_session_into_note(monkeypatch, t
     )
 
     note_path = check_and_salvage_orphan(
-        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+        Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
     )
 
     assert note_path is not None
@@ -666,7 +594,7 @@ def test_check_and_salvage_orphan_computes_duration_from_transcript_mtime(monkey
     )
 
     note_path = check_and_salvage_orphan(
-        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+        Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
     )
 
     assert "duration_minutes: 5" in note_path.read_text()
@@ -710,7 +638,7 @@ def test_cancel_session_sends_sigterm_and_waits_for_live_pid(monkeypatch, tmp_pa
 def test_save_provider_credential_rejects_non_claude_provider(tmp_path):
     from notetaker.service import save_provider_credential
 
-    config = Config(tmp_path, "tiny", "apple_local", "apple-foundationmodel", "UNUSED")
+    config = Config(tmp_path, "apple_local", "apple-foundationmodel", "UNUSED")
     with pytest.raises(ServiceError, match="only supported for the 'claude' provider"):
         save_provider_credential(config, "sk-ant-whatever")
 
@@ -775,7 +703,7 @@ def test_resummarize_note_raises_for_missing_note(tmp_path):
     notes_dir = tmp_path / "notes"
     notes_dir.mkdir()
     with pytest.raises(ServiceError, match="no note found"):
-        resummarize_note(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "nonexistent")
+        resummarize_note(Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "nonexistent")
 
 
 def test_resummarize_note_raises_when_no_transcript_sidecar(tmp_path):
@@ -786,7 +714,7 @@ def test_resummarize_note_raises_when_no_transcript_sidecar(tmp_path):
     # write_note alone doesn't create the sidecar — only stop_session does — so this note has none
     with pytest.raises(ServiceError, match="no persisted transcript"):
         resummarize_note(
-            Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup"
+            Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup"
         )
 
 
@@ -806,7 +734,7 @@ def test_resummarize_note_replaces_summary_from_sidecar(monkeypatch, tmp_path):
     )
 
     result_path = resummarize_note(
-        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup"
+        Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup"
     )
 
     assert result_path == note_path
@@ -833,7 +761,7 @@ def test_resummarize_note_raises_and_preserves_note_when_provider_fails(monkeypa
     monkeypatch.setattr("notetaker.service.summarize_transcript", raise_error)
 
     with pytest.raises(ServiceError, match="resummarization failed"):
-        resummarize_note(Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup")
+        resummarize_note(Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup")
 
     assert note_path.read_text() == original_text
 
@@ -854,7 +782,7 @@ def test_resummarize_note_raises_for_unparseable_note_without_calling_provider(m
 
     with pytest.raises(ServiceError, match="could not be parsed"):
         resummarize_note(
-            Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup"
+            Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), "2026-09-11-standup"
         )
 
 
@@ -875,7 +803,7 @@ def test_stop_session_reports_phases_via_callback(monkeypatch, tmp_path):
     phases = []
     stop_session(
         _session_info(session_dir),
-        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+        Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
         tmp_path,
         on_phase=phases.append,
     )
@@ -909,7 +837,7 @@ def test_check_and_salvage_orphan_returns_none_when_claim_loses_race(monkeypatch
     monkeypatch.setattr("notetaker.service.pid_alive", fake_pid_alive)
 
     result = check_and_salvage_orphan(
-        Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+        Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
     )
 
     assert result is None
@@ -939,7 +867,7 @@ def test_check_and_salvage_orphan_restores_session_file_when_finalize_stop_fails
 
     with pytest.raises(RuntimeError, match="disk full"):
         check_and_salvage_orphan(
-            Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
+            Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"), tmp_path
         )
 
     # The claim must be released so a future attempt can retry — the session
@@ -970,7 +898,7 @@ def test_check_and_salvage_orphan_does_not_double_salvage_during_stop_session(mo
     notes_dir = tmp_path / "notes"
     monkeypatch.setattr("notetaker.service.pid_alive", lambda pid: False)
 
-    config = Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
+    config = Config(notes_dir, "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
 
     # Simulate check_and_salvage_orphan's poll landing while a stop_session
     # (or another finalizer) is already mid-flight and holds the claim.
@@ -1174,7 +1102,7 @@ def test_get_config_returns_config_on_success(tmp_path):
 
     config = get_config(path)
 
-    assert config.whisper_model == "base.en"
+    assert config.ai_provider == "apple_local"
 
 
 def test_service_update_config_wraps_config_error_as_service_error(tmp_path):
@@ -1195,9 +1123,9 @@ def test_service_update_config_returns_updated_config(tmp_path):
     path = tmp_path / "config.yaml"
     write_default_config(path)
 
-    config = update_config({"whisper_model": "small"}, path)
+    config = update_config({"capture_microphone": False}, path)
 
-    assert config.whisper_model == "small"
+    assert config.capture_microphone is False
 
 
 def test_pid_alive_false_for_exited_child_that_was_never_reaped():
@@ -1256,7 +1184,7 @@ def test_check_and_salvage_orphan_leaves_a_newer_live_session_alone(monkeypatch,
     finalized = []
     monkeypatch.setattr("notetaker.service._finalize_stop", lambda *a, **k: finalized.append(a))
 
-    assert check_and_salvage_orphan(Config(tmp_path, "tiny", "claude", "m", "K"), tmp_path) is None
+    assert check_and_salvage_orphan(Config(tmp_path, "claude", "m", "K"), tmp_path) is None
     assert finalized == []
     assert json.loads(session_file.read_text())["pid"] == 222
     assert not session_file.with_suffix(".salvaging").exists()
@@ -1280,7 +1208,7 @@ def test_start_session_reports_routing_warnings_and_disables_mic_when_input_is_b
     assert captured_cmd["cmd"][captured_cmd["cmd"].index("--mic") + 1] == "none"
 
 
-def test_start_session_passes_model_path_and_skips_mic_when_disabled(monkeypatch, tmp_path):
+def test_start_session_skips_mic_when_disabled(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
     monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
     fake_proc = MagicMock(pid=12345)
@@ -1292,15 +1220,14 @@ def test_start_session_passes_model_path_and_skips_mic_when_disabled(monkeypatch
     monkeypatch.setattr("notetaker.service.check_output_routing", lambda: None)
     monkeypatch.setattr("notetaker.service.check_microphone_routing", lambda: (_ for _ in ()).throw(AssertionError("not called")))
     config = Config(
-        tmp_path, "tiny", "apple_local", "m", "K",
-        whisper_model_path="/models/base.en", capture_microphone=False, system_audio="blackhole",
+        tmp_path, "apple_local", "m", "K",
+        capture_microphone=False, system_audio="blackhole",
     )
 
     start_session("Standup", config, tmp_path)
 
     cmd = captured_cmd["cmd"]
     assert cmd[cmd.index("--mic") + 1] == "none"
-    assert cmd[cmd.index("--model-path") + 1] == "/models/base.en"
 
 
 def test_start_session_tap_mode_skips_blackhole_and_passes_tap_process(monkeypatch, tmp_path):
@@ -1335,6 +1262,7 @@ def test_check_setup_reports_tap_support_in_tap_mode(monkeypatch, tmp_path):
 
     monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.NOT_INSTALLED)
     monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
+    monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: "sk")
 
     status = check_setup(_config(tmp_path, system_audio="tap"))
