@@ -1,7 +1,7 @@
 """System-audio capture via Core Audio process taps (macOS 14.2+).
 
 A process tap sees every app's audio *before* it is routed to an output
-device, so it needs no BlackHole driver, no admin password, no reboot and
+device, so it needs no loopback driver, no admin password, no reboot and
 no Multi-Output Device — and headphones stop mattering. The tap is wrapped
 in a private aggregate device that PortAudio (sounddevice) can open like
 any input device, so the rest of the recorder is unchanged.
@@ -86,10 +86,7 @@ def tap_support_problem() -> str | None:
     except ValueError:
         parts = (0, 0)
     if parts < REQUIRED_MACOS:
-        return (
-            f"system_audio: tap requires macOS {REQUIRED_MACOS[0]}.{REQUIRED_MACOS[1]}+ (found {version}). "
-            "Set system_audio: blackhole in ~/.notetaker/config.yaml to use BlackHole instead."
-        )
+        return f"System audio capture requires macOS {REQUIRED_MACOS[0]}.{REQUIRED_MACOS[1]}+ (found {version})."
     try:
         _bindings()
     except Exception as exc:  # missing framework symbol, PyObjC, etc.
@@ -184,8 +181,7 @@ def create_system_audio_tap(process_bundle_id: str | None = None) -> SystemAudio
     if status != 0:
         raise SystemAudioTapError(
             f"could not create a system audio tap (Core Audio status {status}). Grant notetaker "
-            "'System Audio Recording' in System Settings > Privacy & Security > Screen & System Audio Recording, "
-            "or set system_audio: blackhole in ~/.notetaker/config.yaml."
+            "'System Audio Recording' in System Settings > Privacy & Security > Screen & System Audio Recording."
         )
 
     aggregate = b.NSDictionary.dictionaryWithDictionary_(

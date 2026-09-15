@@ -209,7 +209,7 @@ def test_on_toggle_shows_alert_when_start_fails(app, monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.menubar.service.get_current_session_status", lambda config_dir: None)
 
     def fail(title, config, config_dir):
-        raise ServiceError("BlackHole is not active.")
+        raise ServiceError("recorder failed to start.")
 
     monkeypatch.setattr("notetaker.menubar.service.start_session", fail)
     calls = []
@@ -220,7 +220,7 @@ def test_on_toggle_shows_alert_when_start_fails(app, monkeypatch, tmp_path):
     app._on_toggle(None)
 
     assert len(calls) == 1
-    assert "BlackHole is not active." in calls[0][1]
+    assert "recorder failed to start." in calls[0][1]
 
 
 def test_on_toggle_shows_alert_when_start_raises_unexpected_error(app, monkeypatch, tmp_path):

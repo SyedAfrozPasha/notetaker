@@ -122,7 +122,7 @@ def test_start_warnings_stay_pinned_across_status_polls_until_session_ends(clien
         title="Standup",
         start_time=datetime.now(),
         session_dir=session_dir,
-        warnings=["Warning: output is Speakers, not BlackHole"],
+        warnings=["Warning: microphone stopped delivering audio"],
     )
     state = {"info": None}
     monkeypatch.setattr("notetaker.dashboard.service.get_current_session_status", lambda config_dir: state["info"])
@@ -135,12 +135,12 @@ def test_start_warnings_stay_pinned_across_status_polls_until_session_ends(clien
 
     client.post("/start", data={"title": "Standup"})
     polled = client.get("/status")
-    assert "output is Speakers" in polled.text
+    assert "microphone stopped delivering audio" in polled.text
 
     state["info"] = None  # session ended elsewhere (CLI stop, crash)
     idle = client.get("/status")
-    assert "output is Speakers" not in idle.text
+    assert "microphone stopped delivering audio" not in idle.text
 
     state["info"] = info  # same dir reappears without a /start: nothing pinned any more
     again = client.get("/status")
-    assert "output is Speakers" not in again.text
+    assert "microphone stopped delivering audio" not in again.text

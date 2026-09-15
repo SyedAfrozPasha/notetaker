@@ -34,13 +34,6 @@ from notetaker.notes import (
     update_note_fields,
     write_note,
 )
-from notetaker.recorder import (
-    BlackHoleStatus,
-    check_blackhole,
-    check_microphone_routing,
-    check_output_routing,
-    find_blackhole_device_index,
-)
 from notetaker.systemaudio import tap_support_problem
 from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript, validate_claude_api_key
 from notetaker.transcriber import check_ohr_preflight
@@ -136,31 +129,15 @@ def start_session(title: str, config: Config, config_dir: Path, tags: list[str] 
         except (ValueError, KeyError, TypeError, OSError):
             pass
 
-    warnings: list[str] = []
-    if config.system_audio == "tap":
-        problem = tap_support_problem()
-        if problem:
-            raise ServiceError(problem)
-        system_args = ["--system-audio", "tap"]
-        if config.tap_process:
-            system_args += ["--tap-process", config.tap_process]
-    else:
-        status = check_blackhole()
-        if status != BlackHoleStatus.ACTIVE:
-            raise ServiceError("BlackHole is not active. Run `notetaker init` for setup instructions.")
-        device_index = find_blackhole_device_index()
-        system_args = ["--system-audio", "blackhole", "--system-device", str(device_index)]
-        routing_warning = check_output_routing()
-        if routing_warning:
-            warnings.append(routing_warning)
+    problem = tap_support_problem()
+    if problem:
+        raise ServiceError(problem)
+    system_args = []
+    if config.tap_process:
+        system_args += ["--tap-process", config.tap_process]
 
-    mic_arg = "none"
-    if config.capture_microphone:
-        mic_warning = check_microphone_routing()
-        if mic_warning:
-            warnings.append(mic_warning)
-        else:
-            mic_arg = "default"
+    warnings: list[str] = []
+    mic_arg = "default" if config.capture_microphone else "none"
 
     start_time = datetime.now()
     session_dir = config_dir / "sessions" / start_time.strftime("%Y%m%d-%H%M%S")
@@ -527,13 +504,11 @@ def get_note_detail(config: Config, note_id: str) -> NoteDetail:
 
 @dataclass
 class SetupStatus:
-    blackhole: BlackHoleStatus
     provider_ready: bool
     provider_problems: list[str]
     transcription_ready: bool = True
     transcription_problems: list[str] = field(default_factory=list)
-    system_audio: str = "blackhole"  # config.system_audio
-    system_audio_problem: str | None = None  # tap mode only: why taps can't be used here
+    system_audio_problem: str | None = None  # why the Core Audio tap can't be used here, if at all
 
 
 def initialize_config(config_path: Path) -> bool:
@@ -555,10 +530,7 @@ def update_config(updates: dict, config_path: Path = CONFIG_PATH) -> Config:
 
 
 def check_setup(config: Config) -> SetupStatus:
-    blackhole = check_blackhole()
-    audio = {"system_audio": config.system_audio}
-    if config.system_audio == "tap":
-        audio["system_audio_problem"] = tap_support_problem()
+    audio = {"system_audio_problem": tap_support_problem()}
     transcription_problems = check_ohr_preflight()
     transcription = {
         "transcription_ready": not transcription_problems,
@@ -571,7 +543,6 @@ def check_setup(config: Config) -> SetupStatus:
             keychain_credential = None
         if not (keychain_credential or os.environ.get(config.api_key_env)):
             return SetupStatus(
-                blackhole=blackhole,
                 provider_ready=False,
                 provider_problems=[
                     f"No credential found for {config.api_key_env}. Run `notetaker set-api-key <key>`, "
@@ -580,12 +551,10 @@ def check_setup(config: Config) -> SetupStatus:
                 **transcription,
                 **audio,
             )
-        return SetupStatus(blackhole=blackhole, provider_ready=True, provider_problems=[], **transcription, **audio)
+        return SetupStatus(provider_ready=True, provider_problems=[], **transcription, **audio)
     if config.ai_provider == "apple_local":
         problems = check_apple_local_preflight()
-        return SetupStatus(
-            blackhole=blackhole, provider_ready=not problems, provider_problems=problems, **transcription, **audio
-        )
+        return SetupStatus(provider_ready=not problems, provider_problems=problems, **transcription, **audio)
     raise ServiceError(f"Unknown ai_provider '{config.ai_provider}'.")
 
 

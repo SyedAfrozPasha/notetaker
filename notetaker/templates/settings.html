@@ -18,12 +18,7 @@
 
     <fieldset>
       <legend>Audio</legend>
-      <label>Meeting audio source
-        <select name="system_audio">
-          <option value="tap" {% if config.system_audio == "tap" %}selected{% endif %}>System audio tap (macOS 14.2+, nothing to install)</option>
-          <option value="blackhole" {% if config.system_audio == "blackhole" %}selected{% endif %}>BlackHole + Multi-Output Device</option>
-        </select>
-      </label>
+      <p class="hint">Meeting audio is captured via a Core Audio process tap (macOS 14.2+, nothing to install).</p>
       <label>Tap only this app <input type="text" name="tap_process" value="{{ config.tap_process or "" }}" placeholder="com.microsoft.teams2"><span class="hint">Bundle id. Optional; falls back to all system audio when empty or not running.</span></label>
       <label class="check"><input type="checkbox" name="capture_microphone" {% if config.capture_microphone %}checked{% endif %}> Also record my voice (default input device)</label>
     </fieldset>

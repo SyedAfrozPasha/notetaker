@@ -9,8 +9,6 @@ CONFIG_PATH = CONFIG_DIR / "config.yaml"
 DEFAULT_CONFIG_YAML = """\
 notes_dir: ~/notetaker-notes
 capture_microphone: true        # also record your own voice from the default input device
-system_audio: tap               # tap = Core Audio process tap (macOS 14.2+, nothing to install)
-                                # blackhole = BlackHole loopback device + Multi-Output Device
 # tap_process: com.microsoft.teams2   # tap only this app's audio (falls back to all audio if not running)
 ai_provider: apple_local        # apple_local (fully on-device via apfel) or claude (cloud)
 ai_model: apple-foundationmodel
@@ -19,11 +17,9 @@ api_key_env: ANTHROPIC_API_KEY  # only used by ai_provider: claude; never stored
 
 REQUIRED_KEYS = ["notes_dir", "ai_provider", "ai_model", "api_key_env"]
 VALID_PROVIDERS = ("claude", "apple_local")
-VALID_SYSTEM_AUDIO = ("tap", "blackhole")
 PROVIDER_DEFAULT_MODELS = {"claude": "claude-sonnet-5", "apple_local": "apple-foundationmodel"}
 UPDATABLE_KEYS = {
-    "notes_dir", "ai_provider", "ai_model", "capture_microphone",
-    "system_audio", "tap_process",
+    "notes_dir", "ai_provider", "ai_model", "capture_microphone", "tap_process",
 }
 
 
@@ -38,7 +34,6 @@ class Config:
     ai_model: str
     api_key_env: str
     capture_microphone: bool = True
-    system_audio: str = "tap"
     tap_process: str | None = None
 
 
@@ -74,9 +69,6 @@ def _parse_config(raw: dict, path: Path) -> Config:
         raise ConfigError(
             f"Unknown ai_provider '{raw['ai_provider']}' — expected one of {VALID_PROVIDERS}."
         )
-    system_audio = raw.get("system_audio", "tap")
-    if system_audio not in VALID_SYSTEM_AUDIO:
-        raise ConfigError(f"Unknown system_audio '{system_audio}' — expected one of {VALID_SYSTEM_AUDIO}.")
     try:
         return Config(
             notes_dir=Path(raw["notes_dir"]).expanduser(),
@@ -84,7 +76,6 @@ def _parse_config(raw: dict, path: Path) -> Config:
             ai_model=raw["ai_model"],
             api_key_env=raw["api_key_env"],
             capture_microphone=_as_bool(raw.get("capture_microphone", True), "capture_microphone"),
-            system_audio=system_audio,
             tap_process=(raw.get("tap_process") or None),
         )
     except TypeError as exc:

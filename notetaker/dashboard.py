@@ -16,6 +16,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from notetaker import service
 from notetaker.config import CONFIG_DIR, CONFIG_PATH, Config
+from notetaker.timefmt import format_elapsed as _format_elapsed
 
 _PACKAGE_DIR = Path(__file__).parent
 
@@ -93,16 +94,6 @@ def serve_in_background(host: str, port: int) -> BackgroundDashboard:
     thread = threading.Thread(target=server.run, name="notetaker-dashboard", daemon=True)
     thread.start()
     return BackgroundDashboard(url=f"http://{host}:{port}", server=server, thread=thread)
-
-
-def _format_elapsed(start_time: datetime, now: datetime) -> str:
-    """Formats elapsed time as MM:SS, or H:MM:SS past an hour."""
-    total_seconds = int((now - start_time).total_seconds())
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    if hours:
-        return f"{hours}:{minutes:02d}:{seconds:02d}"
-    return f"{minutes:02d}:{seconds:02d}"
 
 
 @dataclass
@@ -554,7 +545,6 @@ def settings_update_config(
     ai_provider: str = Form(...),
     ai_model: str = Form(""),
     capture_microphone: str = Form(""),
-    system_audio: str = Form("tap"),
     tap_process: str = Form(""),
 ):
     try:
@@ -566,7 +556,6 @@ def settings_update_config(
         "notes_dir": notes_dir,
         "ai_provider": ai_provider,
         "capture_microphone": capture_microphone == "on",
-        "system_audio": system_audio,
         "tap_process": tap_process.strip() or None,
     }
     if ai_model.strip():

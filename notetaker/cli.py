@@ -4,7 +4,6 @@ from rich.markup import escape
 
 from notetaker import service
 from notetaker.config import CONFIG_DIR, CONFIG_PATH, ConfigError, load_config
-from notetaker.recorder import BlackHoleStatus
 from notetaker.service import ServiceError
 
 app = typer.Typer()
@@ -38,22 +37,13 @@ def init():
     with console.status("Checking audio setup and AI provider..."):
         status = service.check_setup(config)
 
-    if status.system_audio == "tap":
-        if status.system_audio_problem:
-            typer.echo(f"error: {status.system_audio_problem}", err=True)
-            raise typer.Exit(1)
-        typer.echo(
-            "System audio: Core Audio process tap (nothing to install). macOS will ask for "
-            "'System Audio Recording' permission on the first `notetaker start`."
-        )
-    elif status.blackhole == BlackHoleStatus.NOT_INSTALLED:
-        typer.echo("BlackHole not found. Install it with: brew install blackhole-2ch")
-    elif status.blackhole == BlackHoleStatus.INSTALLED_NOT_ACTIVE:
-        typer.echo(
-            "BlackHole is installed but not active yet — reboot your Mac, then re-run `notetaker init`."
-        )
-    else:
-        typer.echo("BlackHole is installed and active.")
+    if status.system_audio_problem:
+        typer.echo(f"error: {status.system_audio_problem}", err=True)
+        raise typer.Exit(1)
+    typer.echo(
+        "System audio: Core Audio process tap (nothing to install). macOS will ask for "
+        "'System Audio Recording' permission on the first `notetaker start`."
+    )
 
     if not status.transcription_ready:
         for problem in status.transcription_problems:

@@ -195,14 +195,14 @@ def test_start_shows_error_when_service_raises(client, monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
 
     def fail(title, config, config_dir, tags=None):
-        raise service.ServiceError("BlackHole is not active. Run `notetaker init` for setup instructions.")
+        raise service.ServiceError("recorder failed to start — see recorder.log for details")
 
     monkeypatch.setattr("notetaker.dashboard.service.start_session", fail)
 
     response = client.post("/start", data={"title": "Standup", "tags": ""})
 
     assert response.status_code == 200
-    assert "BlackHole is not active" in response.text
+    assert "recorder failed to start" in response.text
     assert "Not recording" in response.text
 
 
@@ -1190,7 +1190,6 @@ def test_settings_update_config_saves_and_redirects(client, monkeypatch, tmp_pat
             "ai_provider": "apple_local",
             "ai_model": "apple-foundationmodel",
             "capture_microphone": "on",
-            "system_audio": "tap",
             "tap_process": "com.microsoft.teams2",
         },
         follow_redirects=False,
@@ -1203,7 +1202,6 @@ def test_settings_update_config_saves_and_redirects(client, monkeypatch, tmp_pat
         "ai_provider": "apple_local",
         "ai_model": "apple-foundationmodel",
         "capture_microphone": True,
-        "system_audio": "tap",
         "tap_process": "com.microsoft.teams2",
     }
 

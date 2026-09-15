@@ -8,7 +8,6 @@ import time
 import urllib.error
 import urllib.request
 import wave
-from enum import Enum
 from pathlib import Path
 
 import numpy as np
@@ -26,90 +25,11 @@ from notetaker.transcriber import (
 
 SAMPLE_RATE = 16000  # what SpeechAnalyzer/ohr wants; CoreAudio resamples every device to it
 SILENCE_PEAK = 200  # int16 peak below which a channel is treated as silent
-SILENT_CHUNKS_BEFORE_WARNING = 3  # BlackHole: a Multi-Output Device carries audio from the first second
-SILENT_CHUNKS_BEFORE_WARNING_TAP = 18  # tap: nothing arrives until an app plays, so wait ~3 min before doubting permission
+SILENT_CHUNKS_BEFORE_WARNING = 18  # nothing arrives until an app plays, so wait ~3 min before doubting permission
 NO_MEETING_AUDIO_WARNING = (
-    "[warning] no meeting audio detected — macOS sound output is probably not the "
-    "Multi-Output Device that includes BlackHole. Fix it in System Settings > Sound > Output."
-)
-NO_MEETING_AUDIO_WARNING_TAP = (
     "[warning] no meeting audio detected — make sure the meeting app is playing sound, and that notetaker "
     "is allowed under System Settings > Privacy & Security > Screen & System Audio Recording."
 )
-
-
-class BlackHoleStatus(Enum):
-    NOT_INSTALLED = "not_installed"
-    INSTALLED_NOT_ACTIVE = "installed_not_active"
-    ACTIVE = "active"
-
-
-def find_blackhole_device_index() -> int | None:
-    for idx, device in enumerate(sd.query_devices()):
-        if "BlackHole" in device.get("name", "") and device.get("max_input_channels", 0) > 0:
-            return idx
-    return None
-
-
-def check_blackhole() -> BlackHoleStatus:
-    if find_blackhole_device_index() is not None:
-        return BlackHoleStatus.ACTIVE
-    try:
-        result = subprocess.run(["brew", "list", "blackhole-2ch"], capture_output=True)
-    except FileNotFoundError:
-        return BlackHoleStatus.NOT_INSTALLED
-    if result.returncode == 0:
-        return BlackHoleStatus.INSTALLED_NOT_ACTIVE
-    return BlackHoleStatus.NOT_INSTALLED
-
-
-def default_input_device_name() -> str | None:
-    try:
-        return sd.query_devices(kind="input").get("name")
-    except Exception:
-        return None
-
-
-def default_output_device_name() -> str | None:
-    try:
-        return sd.query_devices(kind="output").get("name")
-    except Exception:
-        return None
-
-
-def check_output_routing() -> str | None:
-    """Returns a warning when the current macOS sound output is not a
-    Multi-Output Device — BlackHole only hears audio routed through one, so
-    any other output (speakers, headphones picked automatically when you
-    plug them in) silently gives an empty transcript.
-    """
-    name = default_output_device_name()
-    if name is None:
-        return None
-    if "BlackHole" in name:
-        return (
-            f"macOS sound output is '{name}' itself — you will not hear the meeting. "
-            "Select the Multi-Output Device (headphones/speakers + BlackHole) in System Settings > Sound > Output."
-        )
-    if "Multi-Output" not in name and "Aggregate" not in name:
-        return (
-            f"macOS sound output is '{name}', not a Multi-Output Device that includes BlackHole — "
-            "meeting audio will NOT be captured. Select the Multi-Output Device in System Settings > Sound > Output "
-            "(after connecting your headphones)."
-        )
-    return None
-
-
-def check_microphone_routing() -> str | None:
-    """Returns a warning when the default input device is BlackHole itself,
-    which would record the meeting twice and your voice never."""
-    name = default_input_device_name()
-    if name and "BlackHole" in name:
-        return (
-            f"macOS sound input is '{name}' — your voice will not be recorded. "
-            "Select your microphone or headset in System Settings > Sound > Input."
-        )
-    return None
 
 
 class LiveCapture:
@@ -389,9 +309,7 @@ def _parse_args(argv: list[str]):
     parser = argparse.ArgumentParser(prog="notetaker.recorder")
     parser.add_argument("--session-dir", required=True)
     parser.add_argument("--mic", default="default", help="'default' (macOS default input) or 'none'")
-    parser.add_argument("--system-audio", choices=["tap", "blackhole"], default="tap")
-    parser.add_argument("--system-device", type=int, default=None, help="BlackHole device index (blackhole mode)")
-    parser.add_argument("--tap-process", default="", help="bundle id to tap exclusively (tap mode)")
+    parser.add_argument("--tap-process", default="", help="bundle id to tap exclusively")
     return parser.parse_args(argv)
 
 
@@ -406,23 +324,13 @@ def main(argv: list[str]) -> int:
     # Spawned before the tap/capture so a failure to start leaves nothing else to tear down.
     ohr_proc = start_ohr_server()
 
-    tap = None
-    if args.system_audio == "tap":
-        tap = create_system_audio_tap(args.tap_process or None)
-        if args.tap_process and tap.fell_back_to_global:
-            append_transcript_line(
-                transcript_path,
-                f"[note] {args.tap_process} is not running — capturing all system audio instead.",
-            )
-        system_device = portaudio_device_index(tap.device_name)
-        warning = NO_MEETING_AUDIO_WARNING_TAP
-        silent_chunks = SILENT_CHUNKS_BEFORE_WARNING_TAP
-    else:
-        if args.system_device is None:
-            raise SystemExit("--system-device is required with --system-audio blackhole")
-        system_device = args.system_device
-        warning = NO_MEETING_AUDIO_WARNING
-        silent_chunks = SILENT_CHUNKS_BEFORE_WARNING
+    tap = create_system_audio_tap(args.tap_process or None)
+    if args.tap_process and tap.fell_back_to_global:
+        append_transcript_line(
+            transcript_path,
+            f"[note] {args.tap_process} is not running — capturing all system audio instead.",
+        )
+    system_device = portaudio_device_index(tap.device_name)
 
     def _on_stall(source_name: str) -> None:
         if source_name == "microphone":  # meeting audio is legitimately quiet until someone speaks
@@ -435,13 +343,7 @@ def main(argv: list[str]) -> int:
     capture = LiveCapture(system_device, mic, on_stall=_on_stall)
     exit_code = 0
     try:
-        run_recorder(
-            session_dir,
-            Transcriber(),
-            capture.capture_chunk,
-            no_meeting_audio_warning=warning,
-            silent_chunks_before_warning=silent_chunks,
-        )
+        run_recorder(session_dir, Transcriber(), capture.capture_chunk)
     except BaseException:
         import traceback
 
@@ -449,18 +351,15 @@ def main(argv: list[str]) -> int:
         exit_code = 1
     finally:
         stop_ohr_server(ohr_proc)
-        if tap is not None:
-            # Destroy the tap's devices while the PortAudio streams are still
-            # running, then leave without stopping them: Pa_StopStream on the
-            # tap aggregate can deadlock inside CoreAudio (observed: the
-            # aggregate's IO thread holds the HAL mutex while parked waiting
-            # for a cycle). The transcript is complete by now — run_recorder
-            # joins its transcription worker — and a private aggregate must
-            # be destroyed explicitly or it outlives the process.
-            tap.close()
-            _hard_exit(exit_code)
-        else:
-            capture.close()
+        # Destroy the tap's devices while the PortAudio streams are still
+        # running, then leave without stopping them: Pa_StopStream on the
+        # tap aggregate can deadlock inside CoreAudio (observed: the
+        # aggregate's IO thread holds the HAL mutex while parked waiting
+        # for a cycle). The transcript is complete by now — run_recorder
+        # joins its transcription worker — and a private aggregate must
+        # be destroyed explicitly or it outlives the process.
+        tap.close()
+        _hard_exit(exit_code)
     return exit_code
 
 

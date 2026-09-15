@@ -48,16 +48,6 @@ def chunk_transcript(transcript: str, max_tokens: int = 3000) -> list[str]:
     return chunks or [""]
 
 
-def _dedupe_preserve_order(items: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for item in items:
-        if item not in seen:
-            seen.add(item)
-            result.append(item)
-    return result
-
-
 DEFAULT_CHUNK_TOKEN_LIMIT = 3000
 
 _TIMESTAMP_PREFIX = re.compile(r"^\[\d{2}:\d{2}:\d{2}\] ?", re.MULTILINE)
@@ -156,9 +146,7 @@ def summarize_transcript(
     else:
         reduced = _summarize(combined_text)
     tags = sorted({tag for p in partials for tag in p.tags} | set(reduced.tags))
-    action_items = _dedupe_preserve_order(
-        [item for p in partials for item in p.action_items] + reduced.action_items
-    )
+    action_items = list(dict.fromkeys([item for p in partials for item in p.action_items] + reduced.action_items))
     return Summary(text=clean_summary_text(reduced.text, transcript), action_items=action_items, tags=tags)
 
 

@@ -19,3 +19,9 @@ Decision: `system_audio: tap` is the default; `system_audio: blackhole` keeps th
 - Keep BlackHole only — rejected: admin/reboot install and the Multi-Output Device dance were the top usability failures for the headphones-on-a-corporate-Mac use case.
 - ScreenCaptureKit audio capture — rejected: heavier API surface and a "Screen Recording" permission that reads worse to IT than audio-only.
 - Aggregate bound to the built-in speakers as clock — rejected: delivered far fewer cycles than the unbound aggregate in testing and still nothing before first audio; no upside over padding.
+
+## Amendment (2026-09-15): BlackHole fallback removed
+
+The tap has been the default for a full release cycle with no reports of the "older macOS or MDM denies System Audio Recording" case the BlackHole fallback existed for, while it doubled the code paths in `recorder.py`/`service.py` (two argparse audio modes, two routing-check functions, a `BlackHoleStatus` preflight) and the setup docs. `system_audio` is no longer a config key — the Core Audio process tap (this ADR's decision) is now the only supported capture path. A machine that can't grant "System Audio Recording" simply can't run `notetaker start`; `tap_support_problem()` reports why.
+
+Removed: `system_audio: blackhole`, `check_blackhole`/`find_blackhole_device_index`/`BlackHoleStatus` (`recorder.py`), `check_output_routing`/`check_microphone_routing` (BlackHole-specific routing warnings), the `--system-audio`/`--system-device` recorder CLI flags, and the BlackHole install/troubleshooting sections of the README and USAGE docs.

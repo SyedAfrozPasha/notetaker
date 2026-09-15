@@ -8,6 +8,7 @@ from AppKit import NSAttributedString, NSFont, NSFontAttributeName
 from notetaker import service
 from notetaker.config import CONFIG_DIR, ConfigError, load_config
 from notetaker.service import SessionInfo
+from notetaker.timefmt import format_elapsed
 
 APP_NAME = "Notetaker"
 # 1s so the elapsed time in the strip advances every second, not in 2s jumps.
@@ -19,16 +20,6 @@ SAVING_TITLE = "Saving…"
 ASSETS_DIR = Path(__file__).parent / "assets"
 ICON_IDLE = str(ASSETS_DIR / "menubar-idle.png")  # an open ring
 ICON_RECORDING = str(ASSETS_DIR / "menubar-recording.png")  # the ring with a filled dot: a record glyph
-
-
-def format_elapsed(start_time: datetime, now: datetime) -> str:
-    """Formats elapsed time as MM:SS, or H:MM:SS past an hour, for display."""
-    total_seconds = int((now - start_time).total_seconds())
-    hours, remainder = divmod(total_seconds, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    if hours:
-        return f"{hours}:{minutes:02d}:{seconds:02d}"
-    return f"{minutes:02d}:{seconds:02d}"
 
 
 def menu_bar_title(info: SessionInfo | None, now: datetime) -> str | None:

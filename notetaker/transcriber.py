@@ -15,7 +15,7 @@ import numpy as np
 
 # Channel layout of a stereo chunk written by `recorder.LiveCapture`.
 ME_CHANNEL = 0  # your microphone
-OTHERS_CHANNEL = 1  # meeting audio via the Core Audio tap (or BlackHole)
+OTHERS_CHANNEL = 1  # meeting audio via the Core Audio tap
 SPEAKER_LABELS = {ME_CHANNEL: "Me", OTHERS_CHANNEL: "Others"}
 ECHO_WINDOW_SECONDS = 4.0  # a mic echo of the speakers lands within this of the tapped original
 ECHO_SIMILARITY = 0.6  # difflib ratio above which a Me segment is treated as an echo of an Others one

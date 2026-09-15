@@ -31,11 +31,10 @@ version and [CONTEXT.md](CONTEXT.md) for terminology.
 13. [Running the menu bar app / dashboard permanently via `brew services`](#running-the-menu-bar-app--dashboard-permanently-via-brew-services)
 14. [Configuration reference (`~/.notetaker/config.yaml`)](#configuration-reference-notetakerconfigyaml)
 15. [Locked-down / corporate Macs](#locked-down--corporate-macs)
-16. [Fallback: BlackHole loopback instead of the audio tap](#fallback-blackhole-loopback-instead-of-the-audio-tap)
-17. [Updating Notetaker](#updating-notetaker)
-18. [Uninstalling](#uninstalling)
-19. [Troubleshooting](#troubleshooting)
-20. [Recording consent — read this](#recording-consent--read-this)
+16. [Updating Notetaker](#updating-notetaker)
+17. [Uninstalling](#uninstalling)
+18. [Troubleshooting](#troubleshooting)
+19. [Recording consent — read this](#recording-consent--read-this)
 
 ---
 
@@ -152,9 +151,7 @@ note the next time you run a command — you never lose the record of a meeting.
   cloud alternative (unlike the AI summarization step, transcription is not
   provider-swappable; see [ADR 0005](docs/adr/0005-speechanalyzer-via-ohr-replaces-faster-whisper.md)).
   Meeting-audio capture (Core Audio process taps) only needs macOS 14.2+ on its own, but
-  that's moot given the transcription requirement above; macOS older than 14.2 can still
-  use the [BlackHole fallback](#fallback-blackhole-loopback-instead-of-the-audio-tap) for
-  audio capture, but SpeechAnalyzer transcription itself still needs macOS 26+.
+  that's moot given the transcription requirement above.
 - **Homebrew** (https://brew.sh) — used to install Python, `ohr`, `apfel` (if you use the
   default on-device AI provider), and (optionally) to run the menu bar app/dashboard as
   background services.
@@ -524,8 +521,7 @@ What it offers:
 - **Settings** (`/settings`) — change every config value without hand-editing the YAML
   file: notes directory (type a path, or click **Choose in Finder…** to pick the folder in
   macOS's own folder dialog, then **Save configuration**), whether to record your
-  microphone, the meeting audio source (tap or BlackHole) and the tap-only-this-app
-  bundle id, AI provider and model. Switching provider fills in that provider's default
+  microphone, the tap-only-this-app bundle id, AI provider and model. Switching provider fills in that provider's default
   model. When the provider is Claude, a section appears to set/replace the API key
   (masked display, live-validated, stored in the Keychain).
 
@@ -581,8 +577,6 @@ Created by `notetaker init` with these defaults:
 ```yaml
 notes_dir: ~/notetaker-notes
 capture_microphone: true        # also record your own voice from the default input device
-system_audio: tap               # tap = Core Audio process tap (macOS 14.2+, nothing to install)
-                                # blackhole = BlackHole loopback device + Multi-Output Device
 # tap_process: com.microsoft.teams2   # tap only this app's audio (falls back to all audio if not running)
 ai_provider: apple_local        # apple_local (fully on-device via apfel) or claude (cloud)
 ai_model: apple-foundationmodel
@@ -593,7 +587,6 @@ api_key_env: ANTHROPIC_API_KEY  # only used by ai_provider: claude; never stored
 |---|---|---|
 | `notes_dir` | Where finished `.md` notes (and `.transcript.txt` sidecars) are saved | |
 | `capture_microphone` | `true`/`false`. Record your own voice from the macOS default input device | Off = transcript has only the meeting audio, no `Me:`/`Others:` labels |
-| `system_audio` | `tap` (default) or `blackhole` | `tap` needs macOS 14.2+ and the System Audio Recording permission; `blackhole` is the [fallback](#fallback-blackhole-loopback-instead-of-the-audio-tap) |
 | `tap_process` | Optional. Bundle id of the only app to capture in tap mode | e.g. `com.microsoft.teams2` (new Teams). Falls back to all system audio, with a note in the transcript, when that app isn't running |
 | `ai_provider` | `apple_local` (default) or `claude` | See [Step 3](#step-3--choose-and-configure-an-ai-provider) |
 | `ai_model` | Model name passed to the provider | `apple-foundationmodel` for the local provider, e.g. `claude-sonnet-5` for Claude. Changing `ai_provider` without naming a model resets this to the new provider's default |
@@ -615,10 +608,7 @@ via `ohr`, with no model choice, no language other than English, and no fallback
 If your Mac only allows software from Homebrew (no App Store, no downloads from
 websites), the defaults are designed for exactly that situation:
 
-- **Meeting audio needs no install** (the tap is built into macOS). If an IT profile
-  denies the "System Audio Recording" permission, use the
-  [BlackHole fallback](#fallback-blackhole-loopback-instead-of-the-audio-tap) — but note
-  BlackHole is a cask that runs a `.pkg` installer and needs an administrator password.
+- **Meeting audio needs no install** (the tap is built into macOS).
 - **The AI provider is on-device** (`apfel`, installed with Homebrew); no cloud service
   is contacted at any point with the default configuration.
 - **Transcription needs no download at all.** SpeechAnalyzer's speech model ships with
@@ -629,41 +619,6 @@ websites), the defaults are designed for exactly that situation:
   [ADR 0005](docs/adr/0005-speechanalyzer-via-ohr-replaces-faster-whisper.md).
 - **`./install.sh`** uses `pip` against PyPI; it needs the same proxy access your other
   Python tooling has.
-
----
-
-## Fallback: BlackHole loopback instead of the audio tap
-
-Only needed on macOS older than 14.2, or where IT blocks the System Audio Recording
-permission. Set `system_audio: blackhole` in `~/.notetaker/config.yaml` (or pick it on
-the dashboard's Settings page), then:
-
-1. Install [BlackHole](https://github.com/ExistentialAudio/BlackHole), a free virtual
-   audio device that you route your Mac's system output into:
-   ```bash
-   brew install blackhole-2ch
-   ```
-   This is a cask that runs a `.pkg` installer, so it needs an administrator password.
-   **Reboot afterwards** — the driver only becomes active after a restart; `notetaker
-   init` reports "installed but not active" until you do.
-
-2. Create a **Multi-Output Device** so you still hear the meeting: open **Audio MIDI
-   Setup** (Applications → Utilities), click **+** → **Create Multi-Output Device**, tick
-   both your normal output (e.g. **MacBook Pro Speakers**) and **BlackHole 2ch**, and
-   select that Multi-Output Device in **System Settings → Sound → Output** during
-   meetings.
-
-3. **If you use headphones**, make a second Multi-Output Device containing your
-   headphones + BlackHole 2ch (Bluetooth headphones must be connected to show up in the
-   list). macOS switches the sound output straight to headphones every time you connect
-   them, which bypasses BlackHole and gives an empty transcript — so re-select the
-   headphones Multi-Output Device after connecting. `notetaker start` warns if the
-   current output is not a Multi-Output Device, and the live transcript shows a warning
-   if meeting audio stays silent while your mic is active.
-
-4. Volume keys don't work while a Multi-Output Device is selected; adjust volume in
-   Audio MIDI Setup or on the headphones themselves. Switch back to your normal output
-   after the meeting.
 
 ---
 
@@ -702,9 +657,6 @@ security delete-generic-password -s notetaker -a ANTHROPIC_API_KEY
 # notes_dir pointed (default ~/notetaker-notes/). Remove that directory
 # yourself if you want the notes gone too.
 
-# Only if you used the BlackHole fallback — remove it and the Multi-Output Device:
-brew uninstall blackhole-2ch
-# Then delete the Multi-Output Device in Audio MIDI Setup manually.
 # (The audio tap creates nothing persistent — nothing to remove.)
 ```
 
@@ -719,8 +671,7 @@ meeting audio at all, and almost always means the **System Audio Recording** per
 wasn't granted. **System Settings → Privacy & Security → Screen & System Audio Recording** →
 enable "System Audio Recording Only" for the app you started the recording from
 (Terminal/iTerm2, or the `.venv` Python when started from the menu bar/dashboard). Then
-stop and start the recording again. Also check the meeting app isn't muted. In BlackHole
-mode, the same warning means your Mac's output isn't routed to the Multi-Output Device.
+stop and start the recording again. Also check the meeting app isn't muted.
 
 **"[note] com.microsoft.teams2 is not running — capturing all system audio instead."**
 Harmless. You set `tap_process` but started recording before Teams was open, so
@@ -729,7 +680,7 @@ Notetaker fell back to all system audio for this session. Start Teams first next
 **My own voice is missing from the transcript.**
 Check `capture_microphone: true` in the config, that **Microphone** permission is granted
 (below), and that **System Settings → Sound → Input** points at your microphone or
-headset rather than BlackHole. If your Bluetooth headset disconnects mid-meeting the
+headset. If your Bluetooth headset disconnects mid-meeting the
 transcript gets a "[warning] microphone stopped delivering audio" line — reconnect it,
 then stop and start the recording.
 
@@ -739,16 +690,9 @@ Your microphone is picking up your speakers. Notetaker removes most of these ech
 can slip through. Use headphones, or set `capture_microphone: false` if you don't need
 your side recorded.
 
-**"system_audio: tap requires macOS 14.2+".**
-Older macOS: use the [BlackHole fallback](#fallback-blackhole-loopback-instead-of-the-audio-tap).
-
-**"BlackHole not found." / "BlackHole is installed but not active yet."** (BlackHole mode only)
-Run `brew install blackhole-2ch`, reboot, then `notetaker init` again.
-
-**No sound during the meeting after switching to the Multi-Output Device.** (BlackHole mode only)
-Double check both your real output *and* BlackHole 2ch are checked in Audio MIDI
-Setup's Multi-Output Device configuration. Also confirm the Multi-Output Device — not
-plain BlackHole 2ch — is selected in **System Settings → Sound → Output**.
+**"System audio capture requires macOS 14.2+."**
+System audio capture is done via a Core Audio process tap, which macOS added in 14.2;
+there is no fallback for older macOS. Update macOS to use `notetaker start`.
 
 **Microphone permission was denied and I want to fix it.**
 **System Settings → Privacy & Security → Microphone** → toggle on the terminal app you
@@ -815,8 +759,8 @@ Make sure you actually started it (`notetaker dashboard` or
 
 ## Recording consent — read this
 
-Notetaker captures your Mac's **system audio directly** (through a Core Audio tap, or
-BlackHole in fallback mode) plus your microphone — Microsoft Teams (or any other meeting
+Notetaker captures your Mac's **system audio directly** (through a Core Audio tap) plus
+your microphone — Microsoft Teams (or any other meeting
 app) has no idea this is happening, and it will **not** show its own "this meeting is
 being recorded" indicator to other participants.
 `notetaker start` prints a reminder every time, but it is on you to let participants

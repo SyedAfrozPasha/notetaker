@@ -2,28 +2,21 @@ import re
 from pathlib import Path
 
 GITHUB_URL = "https://github.com/SyedAfrozPasha/notetaker"
-
-# One service only: `notetaker dashboard` runs the web dashboard *and* the
-# menu bar app in a single process. A separate `notetaker-menubar` service
-# (which older installs had) would put a second icon in the menu bar.
-SERVICE_DESCRIPTIONS = {
-    "dashboard": "Notetaker web dashboard + menu bar app (brew services wrapper — builds nothing itself)",
-}
+FORMULA_DESC = "Notetaker web dashboard + menu bar app (brew services wrapper — builds nothing itself)"
 
 
-def generate_formula(service: str, repo_dir: Path, version: str) -> str:
+def generate_formula(repo_dir: Path, version: str) -> str:
     """Returns the Ruby source for a personal Homebrew formula that wraps
     an existing `notetaker` installation (already set up by ./install.sh)
-    as a `brew services`-managed background process — this formula never
-    builds or installs any code of its own. `service` must be a key of
-    SERVICE_DESCRIPTIONS, matching the `notetaker <service>` CLI subcommand
-    it runs.
+    as a `brew services`-managed background process running `notetaker
+    dashboard` — this formula never builds or installs any code of its own.
+    One service only: `notetaker dashboard` runs the web dashboard *and* the
+    menu bar app in a single process. A separate `notetaker-menubar` service
+    (which older installs had) would put a second icon in the menu bar.
     """
-    class_name = f"Notetaker{service.capitalize()}"
-    desc = SERVICE_DESCRIPTIONS[service]
     notetaker_bin = repo_dir / ".venv" / "bin" / "notetaker"
-    return f'''class {class_name} < Formula
-  desc "{desc}"
+    return f'''class NotetakerDashboard < Formula
+  desc "{FORMULA_DESC}"
   homepage "{GITHUB_URL}"
   url "{repo_dir}", using: :git, branch: "main"
   version "{version}"
@@ -31,7 +24,7 @@ def generate_formula(service: str, repo_dir: Path, version: str) -> str:
   def install
     # This formula intentionally builds nothing — notetaker itself is
     # installed separately by ./install.sh into its own .venv. This
-    # formula exists solely so `brew services` can manage the {service}
+    # formula exists solely so `brew services` can manage the dashboard
     # process, pointing at that already-existing installation. Named
     # WRAPPER_INFO (not README) because Homebrew treats a handful of
     # standard doc filenames as "metadata only" and refuses to consider
@@ -44,11 +37,11 @@ def generate_formula(service: str, repo_dir: Path, version: str) -> str:
   end
 
   service do
-    run ["{notetaker_bin}", "{service}"]
+    run ["{notetaker_bin}", "dashboard"]
     keep_alive true
     environment_variables PATH: std_service_path_env
-    log_path var/"log/notetaker-{service}.log"
-    error_log_path var/"log/notetaker-{service}.log"
+    log_path var/"log/notetaker-dashboard.log"
+    error_log_path var/"log/notetaker-dashboard.log"
   end
 end
 '''
@@ -63,21 +56,17 @@ def _read_version(repo_dir: Path) -> str:
 
 
 def write_formulas(repo_dir: Path, version: str | None = None) -> list[Path]:
-    """Writes one notetaker-<service>.rb per SERVICE_DESCRIPTIONS entry into
-    repo_dir/Formula/ (creating that directory if needed). If `version` is
-    not given, reads it from repo_dir/pyproject.toml. Returns the list of
-    paths written.
+    """Writes notetaker-dashboard.rb into repo_dir/Formula/ (creating that
+    directory if needed). If `version` is not given, reads it from
+    repo_dir/pyproject.toml. Returns the list of paths written.
     """
     if version is None:
         version = _read_version(repo_dir)
     formula_dir = repo_dir / "Formula"
     formula_dir.mkdir(exist_ok=True)
-    written = []
-    for service in SERVICE_DESCRIPTIONS:
-        path = formula_dir / f"notetaker-{service}.rb"
-        path.write_text(generate_formula(service, repo_dir, version))
-        written.append(path)
-    return written
+    path = formula_dir / "notetaker-dashboard.rb"
+    path.write_text(generate_formula(repo_dir, version))
+    return [path]
 
 
 if __name__ == "__main__":

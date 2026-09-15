@@ -11,7 +11,6 @@ import pytest
 from notetaker import service as service_module
 from notetaker.config import Config
 from notetaker.notes import parse_note_meta, write_note
-from notetaker.recorder import BlackHoleStatus
 from notetaker.service import (
     ServiceError,
     SessionInfo,
@@ -43,17 +42,7 @@ def test_pid_alive_false_for_nonexistent_pid():
 
 
 def _config(tmp_path, **overrides):
-    # BlackHole mode by default: most of these tests exercise the BlackHole
-    # path explicitly. Tap-mode tests pass system_audio="tap".
-    fields = dict(system_audio="blackhole")
-    fields.update(overrides)
-    return Config(tmp_path / "notes", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY", **fields)
-
-
-def test_start_session_fails_when_blackhole_not_active(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.NOT_INSTALLED)
-    with pytest.raises(ServiceError, match="BlackHole is not active"):
-        start_session("Standup", _config(tmp_path), tmp_path)
+    return Config(tmp_path / "notes", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY", **overrides)
 
 
 def test_start_session_fails_when_already_running(monkeypatch, tmp_path):
@@ -61,7 +50,7 @@ def test_start_session_fails_when_already_running(monkeypatch, tmp_path):
     session_file.write_text(
         json.dumps({"pid": os.getpid(), "title": "x", "start_time": "2026-09-11T10:00:00", "session_dir": str(tmp_path)})
     )
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     with pytest.raises(ServiceError, match="already running"):
         start_session("Standup", _config(tmp_path), tmp_path)
 
@@ -69,7 +58,7 @@ def test_start_session_fails_when_already_running(monkeypatch, tmp_path):
 def test_start_session_refuses_while_a_stop_is_in_progress(monkeypatch, tmp_path):
     session_file = tmp_path / "current_session.json"
     session_file.with_suffix(".salvaging").write_text("{}")
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     with pytest.raises(ServiceError, match="currently being stopped"):
         start_session("Standup", _config(tmp_path), tmp_path)
 
@@ -77,8 +66,7 @@ def test_start_session_refuses_while_a_stop_is_in_progress(monkeypatch, tmp_path
 def test_start_session_ignores_corrupt_session_file_and_starts_new_one(monkeypatch, tmp_path):
     session_file = tmp_path / "current_session.json"
     session_file.write_text("{invalid json")
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     fake_proc = MagicMock(pid=54321)
     fake_proc.poll.return_value = None
     monkeypatch.setattr("notetaker.service.subprocess.Popen", lambda *a, **k: fake_proc)
@@ -91,8 +79,7 @@ def test_start_session_ignores_corrupt_session_file_and_starts_new_one(monkeypat
 
 
 def test_start_session_writes_session_file_and_spawns_recorder(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     fake_proc = MagicMock(pid=12345)
     fake_proc.poll.return_value = None
     captured_cmd = {}
@@ -102,8 +89,6 @@ def test_start_session_writes_session_file_and_spawns_recorder(monkeypatch, tmp_
         return fake_proc
 
     monkeypatch.setattr("notetaker.service.subprocess.Popen", fake_popen)
-    monkeypatch.setattr("notetaker.service.check_output_routing", lambda: None)
-    monkeypatch.setattr("notetaker.service.check_microphone_routing", lambda: None)
 
     info = start_session("Standup", _config(tmp_path), tmp_path)
 
@@ -113,7 +98,6 @@ def test_start_session_writes_session_file_and_spawns_recorder(monkeypatch, tmp_
     assert captured_cmd["cmd"] == [
         sys.executable, "-m", "notetaker.recorder",
         "--session-dir", str(info.session_dir), "--mic", "default",
-        "--system-audio", "blackhole", "--system-device", "2",
     ]
     session = json.loads((tmp_path / "current_session.json").read_text())
     assert session == {
@@ -126,8 +110,7 @@ def test_start_session_writes_session_file_and_spawns_recorder(monkeypatch, tmp_
 
 
 def test_start_session_fails_when_recorder_exits_immediately(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     fake_proc = MagicMock(pid=99999)
     fake_proc.poll.return_value = 0
     monkeypatch.setattr("notetaker.service.subprocess.Popen", lambda *a, **k: fake_proc)
@@ -140,8 +123,7 @@ def test_start_session_fails_when_recorder_exits_immediately(monkeypatch, tmp_pa
 
 
 def test_start_session_persists_tags(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     fake_proc = MagicMock(pid=555)
     fake_proc.poll.return_value = None
     monkeypatch.setattr("notetaker.service.subprocess.Popen", lambda *a, **k: fake_proc)
@@ -154,8 +136,7 @@ def test_start_session_persists_tags(monkeypatch, tmp_path):
 
 
 def test_start_session_defaults_to_no_tags(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     fake_proc = MagicMock(pid=556)
     fake_proc.poll.return_value = None
     monkeypatch.setattr("notetaker.service.subprocess.Popen", lambda *a, **k: fake_proc)
@@ -400,29 +381,29 @@ def test_initialize_config_skips_when_present(tmp_path):
     assert config_path.read_text() == "existing: true\n"
 
 
-def test_check_setup_reports_blackhole_and_ready_claude_provider(monkeypatch, tmp_path):
+def test_check_setup_reports_ready_claude_provider(monkeypatch, tmp_path):
     from notetaker.service import SetupStatus, check_setup
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: None)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
     status = check_setup(_config(tmp_path))
-    assert status == SetupStatus(blackhole=BlackHoleStatus.ACTIVE, provider_ready=True, provider_problems=[])
+    assert status == SetupStatus(provider_ready=True, provider_problems=[])
 
 
 def test_check_setup_reports_ready_when_keychain_has_credential(monkeypatch, tmp_path):
     from notetaker.service import SetupStatus, check_setup
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: "sk-ant-from-keychain")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     status = check_setup(_config(tmp_path))
-    assert status == SetupStatus(blackhole=BlackHoleStatus.ACTIVE, provider_ready=True, provider_problems=[])
+    assert status == SetupStatus(provider_ready=True, provider_problems=[])
 
 
 def test_check_setup_reports_missing_claude_api_key(monkeypatch, tmp_path):
     from notetaker.service import check_setup
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: None)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -439,17 +420,17 @@ def test_check_setup_degrades_to_env_var_when_keychain_raises(monkeypatch, tmp_p
     def raise_keyring_error(key):
         raise KeyringError("Keychain locked")
 
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.get_provider_credential", raise_keyring_error)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
     status = check_setup(_config(tmp_path))
-    assert status == SetupStatus(blackhole=BlackHoleStatus.ACTIVE, provider_ready=True, provider_problems=[])
+    assert status == SetupStatus(provider_ready=True, provider_problems=[])
 
 
 def test_check_setup_reports_apple_local_problems(monkeypatch, tmp_path):
     from notetaker.service import check_setup
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.check_apple_local_preflight", lambda: ["apfel is not installed"])
     status = check_setup(Config(tmp_path, "apple_local", "apple-foundationmodel", "UNUSED"))
@@ -459,7 +440,7 @@ def test_check_setup_reports_apple_local_problems(monkeypatch, tmp_path):
 
 def test_check_setup_reports_ohr_problems_regardless_of_ai_provider(monkeypatch, tmp_path):
     from notetaker.service import check_setup
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: ["ohr is not installed"])
     monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: None)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
@@ -1190,39 +1171,15 @@ def test_check_and_salvage_orphan_leaves_a_newer_live_session_alone(monkeypatch,
     assert not session_file.with_suffix(".salvaging").exists()
 
 
-def test_start_session_reports_routing_warnings_and_disables_mic_when_input_is_blackhole(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
-    fake_proc = MagicMock(pid=12345)
-    fake_proc.poll.return_value = None
-    captured_cmd = {}
-    monkeypatch.setattr(
-        "notetaker.service.subprocess.Popen", lambda cmd, **kwargs: captured_cmd.__setitem__("cmd", cmd) or fake_proc
-    )
-    monkeypatch.setattr("notetaker.service.check_output_routing", lambda: "output is MacBook Pro Speakers")
-    monkeypatch.setattr("notetaker.service.check_microphone_routing", lambda: "input is BlackHole 2ch")
-
-    info = start_session("Standup", _config(tmp_path), tmp_path)
-
-    assert info.warnings == ["output is MacBook Pro Speakers", "input is BlackHole 2ch"]
-    assert captured_cmd["cmd"][captured_cmd["cmd"].index("--mic") + 1] == "none"
-
-
 def test_start_session_skips_mic_when_disabled(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.service.find_blackhole_device_index", lambda: 2)
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     fake_proc = MagicMock(pid=12345)
     fake_proc.poll.return_value = None
     captured_cmd = {}
     monkeypatch.setattr(
         "notetaker.service.subprocess.Popen", lambda cmd, **kwargs: captured_cmd.__setitem__("cmd", cmd) or fake_proc
     )
-    monkeypatch.setattr("notetaker.service.check_output_routing", lambda: None)
-    monkeypatch.setattr("notetaker.service.check_microphone_routing", lambda: (_ for _ in ()).throw(AssertionError("not called")))
-    config = Config(
-        tmp_path, "apple_local", "m", "K",
-        capture_microphone=False, system_audio="blackhole",
-    )
+    config = Config(tmp_path, "apple_local", "m", "K", capture_microphone=False)
 
     start_session("Standup", config, tmp_path)
 
@@ -1230,11 +1187,8 @@ def test_start_session_skips_mic_when_disabled(monkeypatch, tmp_path):
     assert cmd[cmd.index("--mic") + 1] == "none"
 
 
-def test_start_session_tap_mode_skips_blackhole_and_passes_tap_process(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: (_ for _ in ()).throw(AssertionError("not called")))
-    monkeypatch.setattr("notetaker.service.check_output_routing", lambda: (_ for _ in ()).throw(AssertionError("not called")))
+def test_start_session_passes_tap_process(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
-    monkeypatch.setattr("notetaker.service.check_microphone_routing", lambda: None)
     fake_proc = MagicMock(pid=12345)
     fake_proc.poll.return_value = None
     captured_cmd = {}
@@ -1242,32 +1196,28 @@ def test_start_session_tap_mode_skips_blackhole_and_passes_tap_process(monkeypat
         "notetaker.service.subprocess.Popen", lambda cmd, **kwargs: captured_cmd.__setitem__("cmd", cmd) or fake_proc
     )
 
-    info = start_session("Standup", _config(tmp_path, system_audio="tap", tap_process="com.microsoft.teams2"), tmp_path)
+    info = start_session("Standup", _config(tmp_path, tap_process="com.microsoft.teams2"), tmp_path)
 
     assert info.warnings == []
     cmd = captured_cmd["cmd"]
-    assert cmd[cmd.index("--system-audio") + 1] == "tap"
     assert cmd[cmd.index("--tap-process") + 1] == "com.microsoft.teams2"
-    assert "--system-device" not in cmd
 
 
-def test_start_session_tap_mode_fails_clearly_when_taps_unsupported(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: "system_audio: tap requires macOS 14.2+")
+def test_start_session_fails_clearly_when_taps_unsupported(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: "System audio capture requires macOS 14.2+")
     with pytest.raises(ServiceError, match="requires macOS 14.2"):
-        start_session("Standup", _config(tmp_path, system_audio="tap"), tmp_path)
+        start_session("Standup", _config(tmp_path), tmp_path)
 
 
-def test_check_setup_reports_tap_support_in_tap_mode(monkeypatch, tmp_path):
+def test_check_setup_reports_tap_support(monkeypatch, tmp_path):
     from notetaker.service import check_setup
 
-    monkeypatch.setattr("notetaker.service.check_blackhole", lambda: BlackHoleStatus.NOT_INSTALLED)
     monkeypatch.setattr("notetaker.service.tap_support_problem", lambda: None)
     monkeypatch.setattr("notetaker.service.check_ohr_preflight", lambda: [])
     monkeypatch.setattr("notetaker.service.get_provider_credential", lambda key: "sk")
 
-    status = check_setup(_config(tmp_path, system_audio="tap"))
+    status = check_setup(_config(tmp_path))
 
-    assert status.system_audio == "tap"
     assert status.system_audio_problem is None
     assert status.provider_ready is True
 

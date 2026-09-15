@@ -27,7 +27,7 @@ Turning an Orphaned session's Transcript into a Note, so a Recorder crash never 
 _Avoid_: Recovery, cleanup
 
 **Recorder**:
-The role that captures a Meeting's system audio (via BlackHole) and divides it into Chunks for the Transcriber.
+The role that captures a Meeting's system audio (via a Core Audio process tap) and divides it into Chunks for the Transcriber.
 _Avoid_: Capture process
 
 **Chunk**:
@@ -49,10 +49,6 @@ _Avoid_: Partial transcript (fine as a plain-English gloss, not as the standalon
 **ohr**:
 The third-party local server the Transcriber talks to; exposes Apple's on-device SpeechAnalyzer over an OpenAI-compatible HTTP endpoint. Not part of this project.
 _Avoid_: SpeechAnalyzer, Speech framework — SpeechAnalyzer is Apple's underlying framework; ohr is the specific tool this project depends on to reach it.
-
-**BlackHole**:
-The third-party virtual loopback audio device the Recorder reads system audio from — the mechanism that makes capturing a Meeting possible without a physical patch cable. Not part of this project; the user installs and enables it as a setup step.
-_Avoid_: Loopback device, virtual mic
 
 ### Summarization
 

@@ -10,7 +10,7 @@ import pytest
 def test_generate_formula_dashboard_has_correct_service_block(tmp_path):
     from notetaker.brew_formula import generate_formula
 
-    formula = generate_formula("dashboard", tmp_path, "0.1.0")
+    formula = generate_formula(tmp_path, "0.1.0")
 
     assert "class NotetakerDashboard < Formula" in formula
     assert f'url "{tmp_path}", using: :git, branch: "main"' in formula
@@ -19,22 +19,6 @@ def test_generate_formula_dashboard_has_correct_service_block(tmp_path):
     assert 'log_path var/"log/notetaker-dashboard.log"' in formula
     assert 'error_log_path var/"log/notetaker-dashboard.log"' in formula
     assert "keep_alive true" in formula
-
-
-def test_generate_formula_rejects_unknown_service(tmp_path):
-    from notetaker.brew_formula import generate_formula
-
-    with pytest.raises(KeyError):
-        generate_formula("bogus", tmp_path, "0.1.0")
-
-
-def test_generate_formula_no_longer_offers_a_separate_menubar_service(tmp_path):
-    """The menu bar lives inside the `notetaker dashboard` process now; a
-    second `brew services` entry would put two icons in the menu bar."""
-    from notetaker.brew_formula import generate_formula
-
-    with pytest.raises(KeyError):
-        generate_formula("menubar", tmp_path, "0.1.0")
 
 
 def test_write_formulas_creates_only_the_dashboard_formula(tmp_path):
@@ -117,7 +101,7 @@ def test_generated_formula_is_accepted_by_real_brew(tmp_path):
             ["brew", "--repository", full_tap], check=True, capture_output=True, text=True
         ).stdout.strip()
         formula_path = Path(tap_dir) / "Formula" / f"{formula_slug}.rb"
-        formula_text = generate_formula("dashboard", fake_repo, "0.0.0-test").replace(
+        formula_text = generate_formula(fake_repo, "0.0.0-test").replace(
             "class NotetakerDashboard < Formula", f"class {formula_class} < Formula", 1
         )
         formula_path.write_text(formula_text)

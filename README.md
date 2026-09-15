@@ -90,26 +90,6 @@ save the note. See [Usage](#usage) below for the full command list.
    are near-duplicates of an `Others:` line at the same moment, but headphones give the
    cleanest transcript.
 
-   <details>
-   <summary><b>Fallback: BlackHole loopback (older macOS, or if the tap is blocked by IT)</b></summary>
-
-   Set `system_audio: blackhole` in `~/.notetaker/config.yaml`, then:
-
-   - Install [BlackHole](https://github.com/ExistentialAudio/BlackHole) via Homebrew
-     (`brew install blackhole-2ch` — a cask that runs a `.pkg` installer, so it needs an
-     administrator password) and **reboot**; `notetaker init` tells you if it's installed
-     but not yet active.
-   - Create a Multi-Output Device in **Audio MIDI Setup** (Applications → Utilities: **+** →
-     **Create Multi-Output Device**, tick your speakers + **BlackHole 2ch**) and select it in
-     **System Settings → Sound → Output** during meetings. If you use headphones, make a
-     second Multi-Output Device with headphones + BlackHole (Bluetooth headphones must be
-     connected to appear) and re-select it every time you connect them — macOS switches
-     output straight to headphones, which bypasses BlackHole and gives an empty transcript.
-     `notetaker start` warns when the output is not a Multi-Output Device, and the live
-     transcript warns if meeting audio stays silent while your mic is active. Volume keys
-     don't work while a Multi-Output Device is selected.
-   </details>
-
 3. Clone this repo and run the installer:
 
    ```bash
@@ -226,9 +206,7 @@ run one `notetaker start`/`stop` from Terminal first.
 
 ## Locked-down / corporate Macs (Homebrew only, no other downloads)
 
-- **Meeting audio needs no install** in the default tap mode. If an MDM profile denies
-  "System Audio Recording", the fallback is BlackHole (`brew install blackhole-2ch`, a cask
-  that runs a `.pkg` installer and needs an administrator password).
+- **Meeting audio needs no install** — captured via a Core Audio process tap built into macOS.
 - **Transcription needs no download.** SpeechAnalyzer's speech model ships with macOS
   itself — only the `ohr` binary needs installing via Homebrew (step 4 above), which is
   exactly what this project switched to: `faster-whisper`'s Hugging Face model download

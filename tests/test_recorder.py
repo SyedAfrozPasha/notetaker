@@ -4,7 +4,7 @@ import signal
 import pytest
 from unittest.mock import MagicMock
 
-from notetaker.recorder import BlackHoleStatus, check_blackhole, run_recorder
+from notetaker.recorder import run_recorder
 
 
 class FakeTranscriber:
@@ -15,30 +15,6 @@ class FakeTranscriber:
     def transcribe_chunk(self, wav_path, elapsed_seconds):
         self.calls += 1
         return self.lines.pop(0) if self.lines else ""
-
-
-def test_check_blackhole_not_installed(monkeypatch):
-    import subprocess as sp
-
-    monkeypatch.setattr("notetaker.recorder.subprocess.run", lambda *a, **k: sp.CompletedProcess(a, returncode=1))
-    monkeypatch.setattr("notetaker.recorder.find_blackhole_device_index", lambda: None)
-    assert check_blackhole() == BlackHoleStatus.NOT_INSTALLED
-
-
-def test_check_blackhole_installed_not_active(monkeypatch):
-    import subprocess as sp
-
-    monkeypatch.setattr("notetaker.recorder.subprocess.run", lambda *a, **k: sp.CompletedProcess(a, returncode=0))
-    monkeypatch.setattr("notetaker.recorder.find_blackhole_device_index", lambda: None)
-    assert check_blackhole() == BlackHoleStatus.INSTALLED_NOT_ACTIVE
-
-
-def test_check_blackhole_active(monkeypatch):
-    import subprocess as sp
-
-    monkeypatch.setattr("notetaker.recorder.subprocess.run", lambda *a, **k: sp.CompletedProcess(a, returncode=1))
-    monkeypatch.setattr("notetaker.recorder.find_blackhole_device_index", lambda: 3)
-    assert check_blackhole() == BlackHoleStatus.ACTIVE
 
 
 def test_run_recorder_stops_on_sigterm_and_appends_transcript(tmp_path):
@@ -143,15 +119,21 @@ def test_run_recorder_warns_once_when_meeting_channel_stays_silent_but_mic_is_li
         if call_count["n"] >= 5:
             os.kill(os.getpid(), signal.SIGTERM)
 
-    run_recorder(session_dir, transcriber=FakeTranscriber([]), chunk_seconds=1, capture_fn=fake_capture)
+    # A tap delivers nothing until an app plays, so pass a small threshold
+    # here rather than relying on the real (much larger) default.
+    run_recorder(
+        session_dir, transcriber=FakeTranscriber([]), chunk_seconds=1, capture_fn=fake_capture,
+        silent_chunks_before_warning=3,
+    )
 
     transcript = (session_dir / "transcript.txt").read_text()
     assert transcript.count(NO_MEETING_AUDIO_WARNING) == 1
 
 
 def test_run_recorder_silence_threshold_is_configurable(tmp_path):
-    # Tap mode waits much longer: meeting audio is legitimately absent until an app plays.
-    from notetaker.recorder import NO_MEETING_AUDIO_WARNING_TAP
+    # Meeting audio is legitimately absent until an app plays, so the real
+    # default threshold is generous; a caller can still tighten or loosen it.
+    from notetaker.recorder import NO_MEETING_AUDIO_WARNING
 
     session_dir = tmp_path / "session"
     session_dir.mkdir()
@@ -165,11 +147,11 @@ def test_run_recorder_silence_threshold_is_configurable(tmp_path):
 
     run_recorder(
         session_dir, transcriber=FakeTranscriber([]), chunk_seconds=1, capture_fn=fake_capture,
-        no_meeting_audio_warning=NO_MEETING_AUDIO_WARNING_TAP, silent_chunks_before_warning=18,
+        silent_chunks_before_warning=10,
     )
 
     transcript_path = session_dir / "transcript.txt"
-    assert not transcript_path.exists() or NO_MEETING_AUDIO_WARNING_TAP not in transcript_path.read_text()
+    assert not transcript_path.exists() or NO_MEETING_AUDIO_WARNING not in transcript_path.read_text()
 
 
 def test_run_recorder_does_not_warn_when_meeting_audio_present(tmp_path):
@@ -189,28 +171,6 @@ def test_run_recorder_does_not_warn_when_meeting_audio_present(tmp_path):
 
     transcript_path = session_dir / "transcript.txt"
     assert not transcript_path.exists() or NO_MEETING_AUDIO_WARNING not in transcript_path.read_text()
-
-
-def test_check_output_routing_flags_plain_output_devices(monkeypatch):
-    from notetaker.recorder import check_output_routing
-
-    monkeypatch.setattr("notetaker.recorder.default_output_device_name", lambda: "MacBook Pro Speakers")
-    assert "Multi-Output" in check_output_routing()
-    monkeypatch.setattr("notetaker.recorder.default_output_device_name", lambda: "BlackHole 2ch")
-    assert "will not hear" in check_output_routing()
-    monkeypatch.setattr("notetaker.recorder.default_output_device_name", lambda: "Multi-Output Device")
-    assert check_output_routing() is None
-    monkeypatch.setattr("notetaker.recorder.default_output_device_name", lambda: None)
-    assert check_output_routing() is None
-
-
-def test_check_microphone_routing_flags_blackhole_as_input(monkeypatch):
-    from notetaker.recorder import check_microphone_routing
-
-    monkeypatch.setattr("notetaker.recorder.default_input_device_name", lambda: "BlackHole 2ch")
-    assert "your voice will not be recorded" in check_microphone_routing()
-    monkeypatch.setattr("notetaker.recorder.default_input_device_name", lambda: "AirPods Pro")
-    assert check_microphone_routing() is None
 
 
 def test_live_capture_writes_stereo_chunk_me_left_others_right(monkeypatch):
@@ -378,14 +338,11 @@ def test_main_tap_mode_creates_tap_resolves_device_and_closes_everything(monkeyp
     monkeypatch.setattr(recorder, "Transcriber", lambda: events.append("model"))
     monkeypatch.setattr(recorder, "start_ohr_server", lambda: events.append("ohr_start") or "OHRPROC")
     monkeypatch.setattr(recorder, "stop_ohr_server", lambda proc: events.append(("ohr_stop", proc)))
-    monkeypatch.setattr(
-        recorder, "run_recorder",
-        lambda *a, **k: events.append(("run", k["no_meeting_audio_warning"], k["silent_chunks_before_warning"])),
-    )
+    monkeypatch.setattr(recorder, "run_recorder", lambda *a, **k: events.append(("run",)))
 
     recorder.main([
         "--session-dir", str(tmp_path), "--mic", "default",
-        "--system-audio", "tap", "--tap-process", "com.microsoft.teams2",
+        "--tap-process", "com.microsoft.teams2",
     ])
 
     assert events == [
@@ -394,7 +351,7 @@ def test_main_tap_mode_creates_tap_resolves_device_and_closes_everything(monkeyp
         ("index", "notetaker-system-audio"),
         ("capture", 4, "default"),
         "model",
-        ("run", recorder.NO_MEETING_AUDIO_WARNING_TAP, recorder.SILENT_CHUNKS_BEFORE_WARNING_TAP),
+        ("run",),
         ("ohr_stop", "OHRPROC"),
         "tap.close",  # destroyed before any stream stop, then hard exit (see recorder.main)
         ("hard_exit", 0),
@@ -406,38 +363,6 @@ def test_main_tap_mode_creates_tap_resolves_device_and_closes_everything(monkeyp
     captures[0].on_stall("microphone")
     transcript = (tmp_path / "transcript.txt").read_text()
     assert transcript.count("[warning]") == 1 and "microphone stopped" in transcript
-
-
-def test_main_blackhole_mode_uses_given_device_and_no_tap(monkeypatch, tmp_path):
-    from notetaker import recorder
-
-    events = []
-    monkeypatch.setattr(
-        "notetaker.systemaudio.create_system_audio_tap", lambda bundle: (_ for _ in ()).throw(AssertionError("no tap"))
-    )
-
-    class FakeCapture:
-        def __init__(self, system_device, mic, on_stall=None):
-            events.append(("capture", system_device, mic))
-
-        def capture_chunk(self, seconds, out):
-            pass
-
-        def close(self):
-            pass
-
-    monkeypatch.setattr(recorder, "LiveCapture", FakeCapture)
-    monkeypatch.setattr(recorder, "Transcriber", lambda: None)
-    monkeypatch.setattr(recorder, "start_ohr_server", lambda: "OHRPROC")
-    monkeypatch.setattr(recorder, "stop_ohr_server", lambda proc: None)
-    monkeypatch.setattr(recorder, "run_recorder", lambda *a, **k: events.append(("run", k["no_meeting_audio_warning"])))
-
-    recorder.main([
-        "--session-dir", str(tmp_path), "--mic", "none",
-        "--system-audio", "blackhole", "--system-device", "2",
-    ])
-
-    assert events == [("capture", 2, None), ("run", recorder.NO_MEETING_AUDIO_WARNING)]
 
 
 def test_portaudio_device_index_reenumerates_and_finds_input_device(monkeypatch):
@@ -613,7 +538,7 @@ def test_main_tap_mode_hard_exits_nonzero_when_recording_crashes(monkeypatch, tm
     monkeypatch.setattr(recorder, "stop_ohr_server", lambda proc: events.append(("ohr_stop", proc)))
     monkeypatch.setattr(recorder, "run_recorder", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
 
-    recorder.main(["--session-dir", str(tmp_path), "--system-audio", "tap"])
+    recorder.main(["--session-dir", str(tmp_path)])
 
     assert events == [("ohr_stop", "OHRPROC"), "tap.close", ("hard_exit", 1)]
 

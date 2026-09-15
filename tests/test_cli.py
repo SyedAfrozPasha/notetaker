@@ -5,7 +5,6 @@ from typer.testing import CliRunner
 
 from notetaker.cli import app
 from notetaker.config import Config
-from notetaker.recorder import BlackHoleStatus
 from notetaker.service import ServiceError, SessionInfo, SetupStatus
 
 runner = CliRunner()
@@ -15,20 +14,34 @@ def _config(tmp_path):
     return Config(tmp_path / "notes", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
 
 
-def test_init_writes_config_and_reports_blackhole_active(monkeypatch, tmp_path):
+def test_init_writes_config_and_reports_system_audio_ready(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.cli.service.initialize_config", lambda path: True)
     monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "notetaker.cli.service.check_setup",
-        lambda config: SetupStatus(BlackHoleStatus.ACTIVE, True, []),
+        lambda config: SetupStatus(True, []),
     )
 
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    assert "BlackHole is installed and active" in result.output
+    assert "System audio: Core Audio process tap" in result.output
     assert "ohr is installed" in result.output
     assert "ANTHROPIC_API_KEY is set." in result.output
+
+
+def test_init_fails_when_system_audio_not_supported(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.service.initialize_config", lambda path: True)
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        "notetaker.cli.service.check_setup",
+        lambda config: SetupStatus(True, [], system_audio_problem="System audio capture requires macOS 14.2+"),
+    )
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 1
+    assert "error: System audio capture requires macOS 14.2+" in result.output
 
 
 def test_init_fails_when_transcription_not_ready(monkeypatch, tmp_path):
@@ -37,7 +50,7 @@ def test_init_fails_when_transcription_not_ready(monkeypatch, tmp_path):
     monkeypatch.setattr(
         "notetaker.cli.service.check_setup",
         lambda config: SetupStatus(
-            BlackHoleStatus.ACTIVE, True, [], transcription_ready=False, transcription_problems=["ohr is not installed."]
+            True, [], transcription_ready=False, transcription_problems=["ohr is not installed."]
         ),
     )
 
@@ -52,7 +65,7 @@ def test_init_fails_when_provider_not_ready(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
     monkeypatch.setattr(
         "notetaker.cli.service.check_setup",
-        lambda config: SetupStatus(BlackHoleStatus.ACTIVE, False, ["ANTHROPIC_API_KEY is not set."]),
+        lambda config: SetupStatus(False, ["ANTHROPIC_API_KEY is not set."]),
     )
 
     result = runner.invoke(app, ["init"])
@@ -66,14 +79,14 @@ def test_start_reports_service_error(monkeypatch, tmp_path):
     monkeypatch.setattr("notetaker.cli.service.check_and_salvage_orphan", lambda config, config_dir: None)
 
     def fail(*a, **k):
-        raise ServiceError("BlackHole is not active. Run `notetaker init` for setup instructions.")
+        raise ServiceError("recorder failed to start — see /tmp/recorder.log for details")
 
     monkeypatch.setattr("notetaker.cli.service.start_session", fail)
 
     result = runner.invoke(app, ["start", "Standup"])
 
     assert result.exit_code == 1
-    assert "BlackHole is not active" in result.output
+    assert "recorder failed to start" in result.output
 
 
 def test_start_prints_reminders_and_confirmation_on_success(monkeypatch, tmp_path):
