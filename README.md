@@ -4,6 +4,72 @@ Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally 
 Apple's on-device SpeechAnalyzer (via [`ohr`](https://github.com/Arthur-Ficial/ohr)), and
 saves an AI-generated summary as a Markdown note. macOS only.
 
+## Quick start
+
+### Prerequisites
+
+- **Apple Silicon Mac** running **macOS 26 or later** (required for `ohr`/SpeechAnalyzer
+  transcription and for `apfel`; there is no older-macOS or Intel fallback for either).
+- **Apple Intelligence** enabled and signed into iCloud (step 2 below).
+- **[Homebrew](https://brew.sh)** — installs Python, `ohr`, and `apfel`.
+- **Python 3.10 or 3.11** specifically (step 1 below).
+- **git**, to clone this repo.
+- An **Anthropic (Claude) API key** — only if you opt out of the default on-device
+  provider; get one at https://console.anthropic.com/.
+
+Six steps, in order. All defaults are fully on-device — nothing leaves your Mac and
+nothing needs an account or API key. Each step is expanded with requirements and
+troubleshooting in [Setup](#setup) and in the full [USAGE.md](USAGE.md) guide.
+
+1. **Install Python 3.11.** Check what you have first — `python3 --version`. If it's not
+   3.10 or 3.11:
+   ```bash
+   brew install python@3.11
+   ```
+   `install.sh` (step 5 below) looks for a qualifying `python3` on your `PATH` and tells
+   you clearly if it can't find one.
+
+2. **Enable Apple Intelligence** (powers the AI summary via `apfel`, below):
+   **System Settings → Apple Intelligence & Siri** → turn it on. Requires Apple Silicon,
+   macOS 26+, being signed into iCloud, and Device Language + Siri Language set to the
+   same supported language. The on-device model (~3–4 GB) then downloads in the
+   background — give it a few minutes on first enable.
+
+3. **Install and start `apfel`** (on-device AI summarization — turns the transcript into
+   minutes/action items/tags):
+   ```bash
+   brew install apfel
+   brew services start apfel
+   ```
+
+4. **Install `ohr`** (on-device transcription — required, not optional; same author as
+   `apfel`):
+   ```bash
+   brew tap Arthur-Ficial/tap
+   brew install Arthur-Ficial/tap/ohr
+   ```
+   Requires macOS 26+ and Apple Silicon. Nothing to download afterwards — the speech
+   model ships with macOS itself. Unlike `apfel`, don't `brew services start` this one;
+   `notetaker start` spawns and tears down its own `ohr --serve` process per recording.
+
+5. **Clone this repo and run the installer:**
+   ```bash
+   git clone <this-repo-url>
+   cd notetaker-app
+   ./install.sh
+   ```
+
+6. **Verify everything's ready:**
+   ```bash
+   notetaker init
+   ```
+   It writes the default config and checks audio capture, `ohr`, and `apfel` in one
+   pass — printing exactly what's missing and the command to fix it (e.g. `brew services
+   start apfel`). Re-run it after fixing anything; it's safe to run repeatedly.
+
+You're set — `notetaker start "Meeting title"` to begin recording, `notetaker stop` to
+save the note. See [Usage](#usage) below for the full command list.
+
 ## Setup
 
 1. **Nothing to install for meeting audio.** On macOS 14.2+ notetaker captures system audio

@@ -16,25 +16,113 @@ version and [CONTEXT.md](CONTEXT.md) for terminology.
 
 ## Table of contents
 
-1. [How it works, in one paragraph](#how-it-works-in-one-paragraph)
-2. [Requirements](#requirements)
-3. [Step 1 — How meeting audio and your voice are captured](#step-1--how-meeting-audio-and-your-voice-are-captured)
-4. [Step 2 — Clone the repo and run the installer](#step-2--clone-the-repo-and-run-the-installer)
-5. [Step 3 — Choose and configure an AI provider](#step-3--choose-and-configure-an-ai-provider)
-6. [Step 4 — Run `notetaker init`](#step-4--run-notetaker-init)
-7. [macOS permission prompts you'll see](#macos-permission-prompts-youll-see)
-8. [Day-to-day usage (CLI)](#day-to-day-usage-cli)
-9. [Where notes are stored, and their format](#where-notes-are-stored-and-their-format)
-10. [Menu bar app](#menu-bar-app)
-11. [Web dashboard](#web-dashboard)
-12. [Running the menu bar app / dashboard permanently via `brew services`](#running-the-menu-bar-app--dashboard-permanently-via-brew-services)
-13. [Configuration reference (`~/.notetaker/config.yaml`)](#configuration-reference-notetakerconfigyaml)
-14. [Locked-down / corporate Macs](#locked-down--corporate-macs)
-15. [Fallback: BlackHole loopback instead of the audio tap](#fallback-blackhole-loopback-instead-of-the-audio-tap)
-16. [Updating Notetaker](#updating-notetaker)
-17. [Uninstalling](#uninstalling)
-18. [Troubleshooting](#troubleshooting)
-19. [Recording consent — read this](#recording-consent--read-this)
+1. [Quick start (step by step)](#quick-start-step-by-step)
+2. [How it works, in one paragraph](#how-it-works-in-one-paragraph)
+3. [Requirements](#requirements)
+4. [Step 1 — How meeting audio and your voice are captured](#step-1--how-meeting-audio-and-your-voice-are-captured)
+5. [Step 2 — Clone the repo and run the installer](#step-2--clone-the-repo-and-run-the-installer)
+6. [Step 3 — Choose and configure an AI provider](#step-3--choose-and-configure-an-ai-provider)
+7. [Step 4 — Run `notetaker init`](#step-4--run-notetaker-init)
+8. [macOS permission prompts you'll see](#macos-permission-prompts-youll-see)
+9. [Day-to-day usage (CLI)](#day-to-day-usage-cli)
+10. [Where notes are stored, and their format](#where-notes-are-stored-and-their-format)
+11. [Menu bar app](#menu-bar-app)
+12. [Web dashboard](#web-dashboard)
+13. [Running the menu bar app / dashboard permanently via `brew services`](#running-the-menu-bar-app--dashboard-permanently-via-brew-services)
+14. [Configuration reference (`~/.notetaker/config.yaml`)](#configuration-reference-notetakerconfigyaml)
+15. [Locked-down / corporate Macs](#locked-down--corporate-macs)
+16. [Fallback: BlackHole loopback instead of the audio tap](#fallback-blackhole-loopback-instead-of-the-audio-tap)
+17. [Updating Notetaker](#updating-notetaker)
+18. [Uninstalling](#uninstalling)
+19. [Troubleshooting](#troubleshooting)
+20. [Recording consent — read this](#recording-consent--read-this)
+
+---
+
+## Quick start (step by step)
+
+### Prerequisites
+
+- **Apple Silicon Mac** running **macOS 26 or later** — required unconditionally for
+  `ohr`/SpeechAnalyzer transcription and for `apfel`; neither has an older-macOS or
+  Intel fallback (see the full [Requirements](#requirements) section below).
+- **Apple Intelligence** enabled and signed into iCloud (step 2 below).
+- **[Homebrew](https://brew.sh)** — installs Python, `ohr`, and `apfel`, and
+  (optionally) runs the menu bar app/dashboard as a background service.
+- **Python 3.10 or 3.11** specifically (step 1 below).
+- **git**, to clone this repo.
+- An **Anthropic (Claude) API key** — only needed if you opt out of the default
+  on-device provider in step 3; get one at https://console.anthropic.com/.
+
+The condensed path from a clean Mac to your first recorded meeting. Six steps, in
+order; every detail (error messages, what to do if a step fails) is covered in depth
+in the sections that follow — this is just the checklist.
+
+**1. Install Python 3.11.** Check what you already have:
+```bash
+python3 --version
+```
+If it isn't 3.10 or 3.11, install one:
+```bash
+brew install python@3.11
+```
+`install.sh` (step 5 below) looks for a qualifying `python3` on your `PATH` and tells
+you clearly, with this exact fix, if it can't find one.
+
+**2. Enable Apple Intelligence.** This powers the AI summarization step (`apfel`,
+below) — do it early since the on-device model takes a few minutes to download.
+**System Settings → Apple Intelligence & Siri** → turn it on. Requires:
+- An Apple Silicon Mac
+- macOS 26 or later
+- Being signed into iCloud, with Apple Intelligence available for your region
+- Device Language and Siri Language set to the same supported language
+
+The on-device model (~3–4 GB) then downloads in the background. `notetaker init`
+(step 6) will tell you if it isn't ready yet.
+
+**3. Install and start `apfel`** — the on-device AI provider that turns your transcript
+into minutes, action items, and tags. No API key, nothing leaves your Mac:
+```bash
+brew install apfel
+brew services start apfel
+```
+(Skip this and see [Option B — Claude](#step-3--choose-and-configure-an-ai-provider)
+instead if you'd rather use a cloud provider for higher-quality summaries.)
+
+**4. Install `ohr`** — the on-device transcription engine (Apple's SpeechAnalyzer
+wrapped in a local server). This one isn't optional or swappable; every recording needs
+it regardless of which AI provider you pick in step 3:
+```bash
+brew tap Arthur-Ficial/tap
+brew install Arthur-Ficial/tap/ohr
+```
+Requires macOS 26+ and Apple Silicon, same as `apfel`. There's no model to download —
+SpeechAnalyzer ships with macOS itself — and no `brew services start` for this one:
+`notetaker start` spawns and tears down its own `ohr --serve` process for each
+recording (see [Step 2](#step-2--clone-the-repo-and-run-the-installer) below for why).
+
+**5. Clone this repo and run the installer:**
+```bash
+git clone <this-repo-url>
+cd notetaker-app
+./install.sh
+```
+This creates a `.venv/`, installs Notetaker into it, and symlinks the `notetaker`
+command to `~/.local/bin/notetaker`. Make sure that's on your `PATH` (add `export
+PATH="$HOME/.local/bin:$PATH"` to `~/.zshrc` if `notetaker --help` isn't found).
+
+**6. Run the setup check:**
+```bash
+notetaker init
+```
+This writes the default config (if none exists yet) and checks audio capture, `ohr`,
+and your AI provider in one pass, printing exactly what's missing and the command to
+fix it. Re-run it after fixing anything reported — it's safe to run repeatedly and
+won't overwrite an existing config. Once it's all green:
+```bash
+notetaker start "Team Standup"   # begin recording
+notetaker stop                   # stop, summarize, save the note
+```
 
 ---
 
