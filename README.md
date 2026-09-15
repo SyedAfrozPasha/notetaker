@@ -1,4 +1,4 @@
-# notetaker
+# Notetaker
 
 Records a meeting's system audio (e.g. Microsoft Teams), transcribes it locally with
 Apple's on-device SpeechAnalyzer (via [`ohr`](https://github.com/Arthur-Ficial/ohr)), and
