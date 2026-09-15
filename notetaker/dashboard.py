@@ -183,6 +183,7 @@ def _status_context(config: Config) -> dict:
         "title": info.title,
         "tags": list(info.tags or []),
         "elapsed": _format_elapsed(info.start_time, datetime.now()),
+        "start_epoch": info.start_time.timestamp(),
         "rows": rows,
         "segment_count": count_segments(rows),
         "seconds_since_update": seconds_since_transcript_update(info.session_dir / "transcript.txt"),
@@ -200,6 +201,16 @@ def _parse_date(value: str | None) -> date | None:
         return date.fromisoformat(value)
     except ValueError:
         return None
+
+
+NOTES_PAGE_SIZE = 10
+
+
+def _parse_page(value: str | None) -> int:
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return 1
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -285,7 +296,12 @@ def _running_stop_job() -> service.StopJob | None:
 
 
 def _processing_context(job: service.StopJob) -> dict:
-    return {"processing": True, "phase": job.phase, "elapsed": _format_elapsed(job.started_at, datetime.now())}
+    return {
+        "processing": True,
+        "phase": job.phase,
+        "elapsed": _format_elapsed(job.started_at, datetime.now()),
+        "start_epoch": job.started_at.timestamp(),
+    }
 
 
 def _take_finished_stop_job() -> service.StopJob | None:
@@ -355,6 +371,7 @@ def notes_list(
     tag: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    page: str | None = None,
 ):
     try:
         config = service.get_config(CONFIG_PATH)
@@ -376,10 +393,24 @@ def notes_list(
             {"error": str(exc), "query": query, "tag": tag, "start_date": start_date, "end_date": end_date},
         )
 
+    total_pages = max(1, -(-len(notes) // NOTES_PAGE_SIZE))  # ceil division
+    current_page = min(_parse_page(page), total_pages)
+    start = (current_page - 1) * NOTES_PAGE_SIZE
+    page_notes = notes[start : start + NOTES_PAGE_SIZE]
+
     return templates.TemplateResponse(
         request,
         "notes_list.html",
-        {"notes": notes, "query": query, "tag": tag, "start_date": start_date, "end_date": end_date},
+        {
+            "notes": page_notes,
+            "total_notes": len(notes),
+            "page": current_page,
+            "total_pages": total_pages,
+            "query": query,
+            "tag": tag,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
     )
 
 
@@ -500,7 +531,7 @@ def notes_resummarize(request: Request, note_id: str):
             },
         )
 
-    return RedirectResponse(f"/notes/{note_id}", status_code=303)
+    return Response(status_code=200, headers={"HX-Redirect": f"/notes/{note_id}"})
 
 
 @app.get("/settings", response_class=HTMLResponse)

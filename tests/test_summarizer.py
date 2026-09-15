@@ -94,7 +94,10 @@ def test_claude_provider_parses_json_response(monkeypatch):
     fake_client = MagicMock()
     fake_response = MagicMock()
     fake_response.content = [
-        MagicMock(type="text", text=json.dumps({"text": "summary", "action_items": ["do x"], "tags": ["standup"]}))
+        MagicMock(
+            type="text",
+            text=json.dumps({"discussion": ["summary"], "action_items": ["do x"], "tags": ["standup"]}),
+        )
     ]
     fake_client.messages.create.return_value = fake_response
     monkeypatch.setattr("anthropic.Anthropic", lambda api_key: fake_client)
@@ -102,7 +105,7 @@ def test_claude_provider_parses_json_response(monkeypatch):
     provider = ClaudeProvider(api_key="fake-key", model="claude-sonnet-5")
     result = provider.summarize("[00:00:01] hello")
 
-    assert result.text == "summary"
+    assert "summary" in result.text
     assert result.action_items == ["do x"]
     assert result.tags == ["standup"]
     fake_client.messages.create.assert_called_once()
@@ -112,7 +115,8 @@ def test_claude_provider_parses_json_response(monkeypatch):
 def test_claude_provider_parses_json_response_wrapped_in_markdown_fences(monkeypatch):
     fake_client = MagicMock()
     fake_response = MagicMock()
-    fenced = "```json\n" + json.dumps({"text": "summary", "action_items": ["do x"], "tags": ["standup"]}) + "\n```"
+    payload = {"discussion": ["summary"], "action_items": ["do x"], "tags": ["standup"]}
+    fenced = "```json\n" + json.dumps(payload) + "\n```"
     fake_response.content = [MagicMock(type="text", text=fenced)]
     fake_client.messages.create.return_value = fake_response
     monkeypatch.setattr("anthropic.Anthropic", lambda api_key: fake_client)
@@ -120,7 +124,7 @@ def test_claude_provider_parses_json_response_wrapped_in_markdown_fences(monkeyp
     provider = ClaudeProvider(api_key="fake-key", model="claude-sonnet-5")
     result = provider.summarize("[00:00:01] hello")
 
-    assert result.text == "summary"
+    assert "summary" in result.text
     assert result.action_items == ["do x"]
     assert result.tags == ["standup"]
     assert fake_client.messages.create.call_args.kwargs["max_tokens"] == 16000
@@ -133,7 +137,7 @@ def _fake_urlopen_response(payload: dict):
 def test_apple_local_provider_parses_openai_shaped_response(monkeypatch):
     response_payload = {
         "choices": [
-            {"message": {"content": json.dumps({"text": "s", "action_items": [], "tags": ["x"]})}}
+            {"message": {"content": json.dumps({"discussion": ["s"], "action_items": [], "tags": ["x"]})}}
         ]
     }
 
@@ -148,7 +152,7 @@ def test_apple_local_provider_parses_openai_shaped_response(monkeypatch):
 
     provider = AppleLocalProvider()
     result = provider.summarize("[00:00:01] hi")
-    assert result.text == "s"
+    assert "s" in result.text
     assert result.tags == ["x"]
 
 
@@ -348,14 +352,14 @@ def test_claude_provider_skips_thinking_blocks(monkeypatch):
     fake_response.stop_reason = "end_turn"
     fake_response.content = [
         MagicMock(type="thinking", thinking="..."),
-        MagicMock(type="text", text=json.dumps({"text": "summary", "action_items": None, "tags": "solo"})),
+        MagicMock(type="text", text=json.dumps({"discussion": ["summary"], "action_items": None, "tags": "solo"})),
     ]
     fake_client.messages.create.return_value = fake_response
     monkeypatch.setattr("anthropic.Anthropic", lambda api_key: fake_client)
 
     result = ClaudeProvider(api_key="k", model="claude-sonnet-5").summarize("hi")
 
-    assert result.text == "summary"
+    assert "summary" in result.text
     assert result.action_items == []  # null coerced, not passed through
     assert result.tags == ["solo"]
 
@@ -410,7 +414,9 @@ def test_summarize_transcript_reports_progress_per_provider_call():
 def test_parse_summary_json_extracts_object_from_surrounding_prose():
     from notetaker.summarizer import _parse_summary_json
 
-    raw = 'Here are the minutes:\n{"text": "t", "action_items": ["Me: send deck"], "tags": ["x"]}\nHope this helps!'
+    raw = (
+        'Here are the minutes:\n{"discussion": "t", "action_items": ["Me: send deck"], "tags": ["x"]}\nHope this helps!'
+    )
     assert _parse_summary_json(raw)["action_items"] == ["Me: send deck"]
 
 

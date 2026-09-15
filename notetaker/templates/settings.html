@@ -17,14 +17,6 @@
     </fieldset>
 
     <fieldset>
-      <legend>Transcription</legend>
-      <div class="grid">
-        <label>Whisper model <input type="text" name="whisper_model" value="{{ config.whisper_model }}" required><span class="hint">tiny / base.en / small / medium</span></label>
-        <label>Local model path <input type="text" name="whisper_model_path" value="{{ config.whisper_model_path or "" }}" placeholder="leave empty to download"><span class="hint">Offline CTranslate2 model directory.</span></label>
-      </div>
-    </fieldset>
-
-    <fieldset>
       <legend>Audio</legend>
       <label>Meeting audio source
         <select name="system_audio">

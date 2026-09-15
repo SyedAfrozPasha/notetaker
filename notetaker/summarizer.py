@@ -181,24 +181,107 @@ def _parse_summary_json(raw: str) -> dict:
     try:
         return json.loads(candidate)
     except json.JSONDecodeError:
-        # ... and leave trailing commas ("...", ] / "...", }) which strict JSON rejects.
-        return json.loads(_TRAILING_COMMA.sub(r"\1", candidate))
+        # ... leave trailing commas ("...", ] / "...", }), forget the comma
+        # between two adjacent items in an array ("a"\n"b"), or close the
+        # last array of the object with "}" instead of "]" (or drop a
+        # closer entirely) — all cheap to repair without writing a full
+        # JSON parser.
+        repaired = _fix_mismatched_brackets(
+            _insert_missing_commas(_TRAILING_COMMA.sub(r"\1", candidate))
+        )
+        return json.loads(repaired)
 
 
 _TRAILING_COMMA = re.compile(r",\s*([}\]])")
 
 
+def _fix_mismatched_brackets(text: str) -> str:
+    """Tracks the stack of open `{`/`[` outside string literals and, for
+    each `}`/`]` closer actually present, swaps it for whichever the stack
+    expects — the model sometimes closes the last array in the object with
+    "}" instead of "]". Any closers still owed once the text runs out
+    (the model stopped one short) are appended at the end.
+    """
+    out = list(text)
+    stack: list[str] = []  # expected closer for each currently-open bracket
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            stack.append("}")
+        elif ch == "[":
+            stack.append("]")
+        elif ch in "}]":
+            if not stack:
+                continue
+            if stack[-1] != ch:
+                out[i] = stack[-1]
+            stack.pop()
+    if stack:
+        out.append("".join(reversed(stack)))
+    return "".join(out)
+
+
+def _insert_missing_commas(text: str) -> str:
+    """Inserts a comma wherever a JSON value ends (a closing quote, `]`, or
+    `}`) and, after only whitespace, another value starts with no comma
+    between them. Scans character by character tracking string-literal
+    state (respecting `\\` escapes) so it never touches text inside a
+    string, unlike a plain regex.
+    """
+    out: list[str] = []
+    in_string = False
+    escape = False
+    last_end = ""  # last closer emitted outside a string: '"', ']', or '}'
+    for ch in text:
+        if in_string:
+            out.append(ch)
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+                last_end = '"'
+            continue
+        if ch.isspace():
+            out.append(ch)
+            continue
+        if last_end and ch not in ",:}]":
+            out.append(",")
+        if ch == '"':
+            in_string = True
+            out.append(ch)
+            last_end = ""
+            continue
+        out.append(ch)
+        last_end = ch if ch in "]}" else ""
+    return "".join(out)
+
+
 SUMMARY_PROMPT_TEMPLATE = """You are writing the minutes of a meeting (MoM) from a transcript. \
 Lines prefixed "Me:" were spoken by the person recording; lines prefixed "Others:" by other participants.
 
-Respond with ONLY a JSON object with exactly these keys:
-- "text": the minutes as a string, written in your own words as short bullet points ("- ") under three headings: \
-"Discussion:", "Decisions:", "Open questions:". Be concrete; keep names, numbers, and dates from the transcript. \
-Never copy sentences from the transcript, and never include the "Me:"/"Others:" prefixes. No preamble.
+Respond with ONLY a JSON object with exactly these keys, all of them siblings at the top level — do not nest \
+any of them inside another object or inside "text":
+- "discussion": a JSON list of short bullet-point strings covering what was discussed, in your own words.
+- "decisions": a JSON list of short bullet-point strings covering decisions made. Empty list if none.
+- "open_questions": a JSON list of short bullet-point strings covering unresolved questions. Empty list if none.
 - "action_items": a list of strings, one per task, each formatted "Owner: task (due date if mentioned)". \
 Use "Me" when the recorder took the task; leave out the owner only if unknown.
 - "tags": a list of 2 to 5 short lowercase topic tags.
-No other text, no markdown fences.
+Be concrete; keep names, numbers, and dates from the transcript. Never copy sentences from the transcript, and \
+never include the "Me:"/"Others:" prefixes. No other text, no markdown fences.
 
 Transcript:
 {transcript}
@@ -258,9 +341,17 @@ def _summary_from_data(data: dict) -> Summary:
     """Coerces the model's JSON into a Summary, tolerating a null or scalar
     where a list was asked for — a malformed field must not crash note
     rendering after the summarization fallback has already passed.
+
+    "discussion"/"decisions"/"open_questions" are requested as three flat,
+    sibling top-level keys rather than nested inside one "text" object or
+    string: the on-device model reliably produces valid JSON for a flat
+    object of arrays, but asked to nest that same content (as a formatted
+    string, or as an object inside "text") it would consistently forget a
+    delimiter — a comma between array items, or the closing brace before
+    the next sibling key — corrupting the whole response.
     """
-    if not isinstance(data, dict) or "text" not in data:
-        raise ValueError("summary JSON is missing the required 'text' key")
+    if not isinstance(data, dict) or "discussion" not in data:
+        raise ValueError("summary JSON is missing the required 'discussion' key")
 
     def _as_list(value) -> list[str]:
         if value is None:
@@ -271,8 +362,13 @@ def _summary_from_data(data: dict) -> Summary:
         cleaned = [_LEADING_BULLET.sub("", str(item).strip()) for item in value]
         return [item for item in cleaned if item]
 
+    sections = {
+        "Discussion": data.get("discussion") or [],
+        "Decisions": data.get("decisions") or [],
+        "Open questions": data.get("open_questions") or [],
+    }
     return Summary(
-        text=format_minutes(_text_as_minutes(data["text"])),
+        text=format_minutes(_text_as_minutes(sections)),
         action_items=_as_list(data.get("action_items")),
         tags=_as_list(data.get("tags")),
     )

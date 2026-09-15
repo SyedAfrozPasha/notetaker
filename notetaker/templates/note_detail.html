@@ -21,19 +21,34 @@
   </div>
   <div class="actions" style="margin:0">
     <a class="btn sm" href="/notes/{{ detail.note_id }}/edit">Edit</a>
-    <form method="post" action="/notes/{{ detail.note_id }}/resummarize">
-      <button type="submit" class="btn sm">Resummarize</button>
-    </form>
-    <form
-      hx-post="/notes/{{ detail.note_id }}/delete"
-      hx-confirm="Delete this note permanently? This cannot be undone."
-      hx-target="body"
-      hx-swap="outerHTML"
-    >
-      <button type="submit" class="btn sm danger">Delete</button>
-    </form>
+    <button type="button" class="btn sm" onclick="document.getElementById('resummarize-dialog').showModal()">Resummarize</button>
+    <button type="button" class="btn sm danger" onclick="document.getElementById('delete-dialog').showModal()">Delete</button>
   </div>
 </div>
+
+<dialog id="resummarize-dialog" class="modal">
+  <h3>Resummarize this note?</h3>
+  <p class="meta">This regenerates the Summary and Action items from the saved transcript, replacing the current ones. This cannot be undone.</p>
+  <div class="actions" style="margin-top:1rem">
+    <button type="button" class="btn sm" onclick="document.getElementById('resummarize-dialog').close()">Cancel</button>
+    <span class="spacer"></span>
+    <form hx-post="/notes/{{ detail.note_id }}/resummarize" hx-target="body" hx-swap="outerHTML" hx-indicator="#action-overlay">
+      <button type="submit" class="btn sm primary" hx-disabled-elt="this">Resummarize</button>
+    </form>
+  </div>
+</dialog>
+
+<dialog id="delete-dialog" class="modal">
+  <h3>Delete this note?</h3>
+  <p class="meta">This permanently deletes the note and its transcript. This cannot be undone.</p>
+  <div class="actions" style="margin-top:1rem">
+    <button type="button" class="btn sm" onclick="document.getElementById('delete-dialog').close()">Cancel</button>
+    <span class="spacer"></span>
+    <form hx-post="/notes/{{ detail.note_id }}/delete" hx-target="body" hx-swap="outerHTML" hx-indicator="#action-overlay">
+      <button type="submit" class="btn sm danger" hx-disabled-elt="this">Delete</button>
+    </form>
+  </div>
+</dialog>
 {% if success %}<div class="banner success">{{ success }}</div>{% endif %}
 {% if warning %}<div class="banner warning">{{ warning }}</div>{% endif %}
 {% if error %}<div class="banner error">{{ error }}</div>{% endif %}
@@ -51,7 +66,7 @@
     <h3>Action items</h3>
     <ul class="checklist">
       {% for item in detail.action_items %}
-      <li><input type="checkbox" disabled> <span>{{ item }}</span></li>
+      <li><span>{{ item }}</span></li>
       {% else %}
       <li class="muted">(none)</li>
       {% endfor %}

@@ -14,7 +14,7 @@
       <span class="live-label muted">Processing</span>
       <h2 class="rec-title">Saving your recording…</h2>
     </div>
-    <div class="timer" aria-label="elapsed">{{ elapsed }}</div>
+    <div class="timer" aria-label="elapsed" data-start="{{ start_epoch }}">{{ elapsed }}</div>
   </div>
   <p class="meta" style="margin:.9rem 0 .3rem"><span class="phase">{{ phase }}</span></p>
   <p class="meta" style="margin:0">Transcribing the last chunk and writing the minutes. This page opens the note when it is ready.</p>
@@ -29,7 +29,7 @@
       <h2 class="rec-title" title="{{ title }}">{{ title }}</h2>
       {% if tags %}<div class="tags">{% for tag in tags %}<span class="tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
     </div>
-    <div class="timer" aria-label="elapsed">{{ elapsed }}</div>
+    <div class="timer" aria-label="elapsed" data-start="{{ start_epoch }}">{{ elapsed }}</div>
   </div>
 
   <div class="rec-meta">

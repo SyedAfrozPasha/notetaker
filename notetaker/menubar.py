@@ -3,6 +3,7 @@ from datetime import datetime
 from pathlib import Path
 
 import rumps
+from AppKit import NSAttributedString, NSFont, NSFontAttributeName
 
 from notetaker import service
 from notetaker.config import CONFIG_DIR, ConfigError, load_config
@@ -50,6 +51,15 @@ def auto_generated_title(now: datetime) -> str:
     return f"Meeting {now:%Y-%m-%d %H:%M}"
 
 
+def _tabular_title(text: str) -> NSAttributedString:
+    """An attributed title using tabular-figure (monospaced) digits, so the
+    strip's ticking timer doesn't visibly jitter as digit shapes change width
+    every second — plain NSStatusItem.setTitle_ uses the proportional system
+    font, in which e.g. "1" is narrower than "8"."""
+    font = NSFont.monospacedDigitSystemFontOfSize_weight_(NSFont.systemFontSize(), 0)
+    return NSAttributedString.alloc().initWithString_attributes_(text, {NSFontAttributeName: font})
+
+
 def note_summarization_failed(note_path: Path) -> bool:
     """Whether a just-saved Note's Summary indicates summarization failed —
     matches the exact fallback text `_summarize_or_fallback` writes.
@@ -76,11 +86,24 @@ class NotetakerMenuBarApp(rumps.App):
     def _on_open_dashboard(self, _sender):
         webbrowser.open(self._dashboard_url)
 
+    def _set_strip_title(self, text: str | None) -> None:
+        """Sets the strip's title, then — once the real status item exists
+        (not in tests, which never call `.run()`) — overrides it with a
+        tabular-figure rendering so a ticking timer doesn't jitter."""
+        self.title = text
+        if text is None:
+            return
+        try:
+            nsstatusitem = self._nsapp.nsstatusitem
+        except AttributeError:
+            return
+        nsstatusitem.setAttributedTitle_(_tabular_title(text))
+
     def _on_tick(self, _timer):
         try:
             config = load_config()
         except ConfigError:
-            self.title = SETUP_WARNING_TITLE
+            self._set_strip_title(SETUP_WARNING_TITLE)
             self._toggle_item.title = "Start Recording"
             return
         try:
@@ -91,7 +114,7 @@ class NotetakerMenuBarApp(rumps.App):
             self._notify("Recovered a crashed session", "Saved as a note", salvaged_path.name)
         job = service.current_stop_job()
         if job is not None and job.running:
-            self.title = SAVING_TITLE
+            self._set_strip_title(SAVING_TITLE)
             self._apply_icon(None)
             self._toggle_item.title = SAVING_TITLE
             return
@@ -99,7 +122,7 @@ class NotetakerMenuBarApp(rumps.App):
             self._reported_stop_job = job
             self._report_stop_result(job)
         info = service.get_current_session_status(CONFIG_DIR)
-        self.title = menu_bar_title(info, datetime.now())
+        self._set_strip_title(menu_bar_title(info, datetime.now()))
         self._apply_icon(info)
         self._toggle_item.title = toggle_item_title(info)
 
@@ -157,7 +180,7 @@ class NotetakerMenuBarApp(rumps.App):
         # Non-blocking: the menu bar stays responsive, shows "Saving…" while the
         # job runs, and the next tick after it finishes reports the outcome.
         service.begin_stop(info, config, CONFIG_DIR)
-        self.title = SAVING_TITLE
+        self._set_strip_title(SAVING_TITLE)
         self._toggle_item.title = SAVING_TITLE
 
     @staticmethod

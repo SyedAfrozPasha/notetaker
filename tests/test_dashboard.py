@@ -683,6 +683,75 @@ def test_notes_list_shows_error_when_search_notes_raises(client, monkeypatch, tm
     assert 'value="roadmap"' in response.text
 
 
+def _note_metas(tmp_path, count):
+    from notetaker.notes import NoteMeta
+
+    return [
+        NoteMeta(f"note-{i}", f"Meeting {i}", datetime(2026, 9, i, 10, 0), 5, [], tmp_path / f"note-{i}.md")
+        for i in range(1, count + 1)
+    ]
+
+
+def test_notes_list_paginates_ten_per_page(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", lambda config, **kw: _note_metas(tmp_path, 25))
+
+    response = client.get("/notes")
+
+    assert response.status_code == 200
+    assert response.text.count('class="note-item"') == 10
+    assert "25 notes" in response.text
+    assert "Page 1 of 3" in response.text
+
+
+def test_notes_list_shows_requested_page(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", lambda config, **kw: _note_metas(tmp_path, 25))
+
+    response = client.get("/notes", params={"page": "3"})
+
+    assert response.status_code == 200
+    assert "Page 3 of 3" in response.text
+    assert response.text.count('class="note-item"') == 5  # last page: 25 - 2*10
+
+
+def test_notes_list_clamps_out_of_range_page(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", lambda config, **kw: _note_metas(tmp_path, 15))
+
+    response = client.get("/notes", params={"page": "99"})
+
+    assert response.status_code == 200
+    assert "Page 2 of 2" in response.text
+
+
+def test_notes_list_no_pagination_nav_when_one_page(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", lambda config, **kw: _note_metas(tmp_path, 5))
+
+    response = client.get("/notes")
+
+    assert response.status_code == 200
+    assert 'class="pagination"' not in response.text
+
+
+def test_notes_list_shows_clear_filters_link_only_when_filtered(client, monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.search_notes", lambda config, **kw: [])
+
+    unfiltered = client.get("/notes")
+    filtered = client.get("/notes", params={"query": "standup"})
+
+    assert "Clear filters" not in unfiltered.text
+    assert "Clear filters" in filtered.text
+    assert 'href="/notes"' in filtered.text
+
+
 def test_base_layout_has_notes_nav_link(client):
     response = client.get("/")
 
@@ -799,6 +868,29 @@ def test_notes_detail_has_copy_full_markdown_button(client, monkeypatch, tmp_pat
 
     assert 'id="full-markdown"' in response.text
     assert "the raw markdown body" in response.text
+
+
+def test_notes_detail_resummarize_and_delete_use_confirmation_modals(client, monkeypatch, tmp_path):
+    from notetaker.service import NoteDetail
+
+    detail = NoteDetail(
+        note_id="2026-09-11-standup", title="Standup", date=datetime(2026, 9, 11, 10, 0),
+        duration_minutes=5, tags=[], summary_text="s", action_items=[], transcript="",
+        path=tmp_path / "2026-09-11-standup.md",
+    )
+    monkeypatch.setattr("notetaker.dashboard.CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr("notetaker.dashboard.service.get_config", lambda path: _config(tmp_path))
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_detail", lambda config, note_id: detail)
+    monkeypatch.setattr("notetaker.dashboard.service.get_note_body", lambda config, note_id: "")
+
+    response = client.get("/notes/2026-09-11-standup")
+
+    assert response.status_code == 200
+    assert 'id="resummarize-dialog"' in response.text
+    assert 'id="delete-dialog"' in response.text
+    assert "hx-confirm" not in response.text  # replaced by the custom modal, not the native browser confirm()
+    assert response.text.count('hx-indicator="#action-overlay"') == 2  # resummarize and delete
+    assert 'id="action-overlay"' in response.text
 
 
 def test_notes_edit_form_prefills_current_fields(client, monkeypatch, tmp_path):
@@ -981,8 +1073,8 @@ def test_notes_resummarize_updates_summary_and_redirects(client, monkeypatch, tm
 
     response = client.post("/notes/2026-09-11-standup/resummarize", follow_redirects=False)
 
-    assert response.status_code == 303
-    assert response.headers["location"] == "/notes/2026-09-11-standup"
+    assert response.status_code == 200
+    assert response.headers["hx-redirect"] == "/notes/2026-09-11-standup"
     assert calls == ["2026-09-11-standup"]
 
 
