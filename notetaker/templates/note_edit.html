@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Edit · Notetaker{% endblock %}
+{% block content %}
+{% if setup_error %}
+<div class="banner error">Notetaker is not set up: {{ setup_error }}</div>
+{% elif not_found %}
+<div class="banner error">{{ not_found }}</div>
+<p><a href="/notes">&larr; Back to notes</a></p>
+{% else %}
+<a class="back" href="/notes/{{ detail.note_id }}">&larr; Back to note</a>
+<div class="page-head"><h2>Edit note</h2></div>
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+<div class="card">
+  <form method="post" action="/notes/{{ detail.note_id }}/edit">
+    <label>Title <input type="text" name="title" value="{{ detail.title }}" required></label>
+    <label>Tags <input type="text" name="tags" value="{{ detail.tags | join(', ') }}"><span class="hint">Comma-separated.</span></label>
+    <label>Summary <textarea name="summary_text" rows="10">{{ detail.summary_text }}</textarea></label>
+    <label>Action items <textarea name="action_items" rows="6">{{ detail.action_items | join('\n') }}</textarea><span class="hint">One per line.</span></label>
+    <div class="actions">
+      <button type="submit" class="btn primary">Save</button>
+      <a class="btn" href="/notes/{{ detail.note_id }}">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

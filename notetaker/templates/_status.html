@@ -1,0 +1,84 @@
+{% from "_transcript.html" import transcript_rows %}
+{% if setup_error %}
+<div class="banner error">Notetaker is not set up: {{ setup_error }}</div>
+{% else %}
+{% if success %}<div class="banner success">{{ success }}</div>{% endif %}
+{% if warning %}<div class="banner warning">Warning: {{ warning }}</div>{% endif %}
+{% if error %}<div class="banner error">{{ error }}</div>{% endif %}
+
+{% if processing %}
+<div class="card">
+  <div class="rec-head">
+    <span class="spinner" aria-hidden="true"></span>
+    <div class="titles">
+      <span class="live-label muted">Processing</span>
+      <h2 class="rec-title">Saving your recording…</h2>
+    </div>
+    <div class="timer" aria-label="elapsed" data-start="{{ start_epoch }}">{{ elapsed }}</div>
+  </div>
+  <p class="meta" style="margin:.9rem 0 .3rem"><span class="phase">{{ phase }}</span></p>
+  <p class="meta" style="margin:0">Transcribing the last chunk and writing the minutes. This page opens the note when it is ready.</p>
+</div>
+
+{% elif recording %}
+<div class="card">
+  <div class="rec-head">
+    <span class="dot" aria-hidden="true"></span>
+    <div class="titles">
+      <span class="live-label">Recording</span>
+      <h2 class="rec-title" title="{{ title }}">{{ title }}</h2>
+      {% if tags %}<div class="tags">{% for tag in tags %}<span class="tag">{{ tag }}</span>{% endfor %}</div>{% endif %}
+    </div>
+    <div class="timer" aria-label="elapsed" data-start="{{ start_epoch }}">{{ elapsed }}</div>
+  </div>
+
+  <div class="rec-meta">
+    {% if seconds_since_update is none %}
+    <span>Waiting for the first transcribed chunk… (about 10 seconds after audio starts)</span>
+    {% else %}
+    <span>{{ segment_count }} segment{{ '' if segment_count == 1 else 's' }}</span>
+    <span>last transcribed
+      {%- if seconds_since_update < 60 %} {{ seconds_since_update }}s ago
+      {%- else %} {{ seconds_since_update // 60 }}m ago{% endif %}</span>
+    {% endif %}
+  </div>
+
+  <div id="transcript" class="transcript" aria-live="polite">
+    {{ transcript_rows(rows, "Nothing transcribed yet.") }}
+  </div>
+
+  <div class="actions">
+    <form hx-post="/stop" hx-target="#status" hx-swap="innerHTML">
+      <button type="submit" class="btn primary">Stop &amp; save</button>
+    </form>
+    <span class="spacer"></span>
+    <form hx-post="/cancel" hx-target="#status" hx-swap="innerHTML" hx-confirm="Cancel this recording? The transcript will be discarded and no note will be saved.">
+      <button type="submit" class="btn danger">Cancel</button>
+    </form>
+  </div>
+</div>
+
+{% else %}
+<div class="card">
+  <div class="idle-head">
+    <span class="idle-dot" aria-hidden="true"></span>
+    <div>
+      <h2>Not recording</h2>
+      <p class="meta" style="margin:0">Start a session to capture the meeting and your own voice.</p>
+    </div>
+  </div>
+  <form id="start-form" hx-preserve="true" hx-post="/start" hx-target="#status" hx-swap="innerHTML">
+    <label>Meeting title
+      <input type="text" name="title" required placeholder="Weekly sync with the platform team" autocomplete="off">
+    </label>
+    <label>Tags
+      <input type="text" name="tags" placeholder="project-x, weekly" autocomplete="off">
+      <span class="hint">Comma-separated. Optional.</span>
+    </label>
+    <div class="actions">
+      <button type="submit" class="btn rec"><span class="dot" style="animation:none;box-shadow:none;background:#fff;width:8px;height:8px"></span>Start recording</button>
+    </div>
+  </form>
+</div>
+{% endif %}
+{% endif %}

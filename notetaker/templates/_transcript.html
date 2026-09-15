@@ -1,0 +1,12 @@
+{# Shared renderer for a Transcript split into rows by dashboard.parse_transcript_rows. #}
+{% macro transcript_rows(rows, empty_text) -%}
+{% for row in rows -%}
+<div class="row{% if row.speaker %} {{ row.speaker }}{% endif %}">
+  {%- if row.time %}<span class="time">{{ row.time }}</span>{% endif -%}
+  {%- if row.speaker == "me" %}<span class="who">Me</span>{% elif row.speaker == "others" %}<span class="who">Others</span>{% endif -%}
+  <span class="text">{{ row.text }}</span>
+</div>
+{% else -%}
+<p class="empty">{{ empty_text }}</p>
+{% endfor -%}
+{%- endmacro %}

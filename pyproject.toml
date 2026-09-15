@@ -8,15 +8,18 @@ dependencies = [
     "pyyaml>=6.0",
     "sounddevice>=0.4",
     "numpy>=1.26",
-    "faster-whisper==1.0.3",
-    "ctranslate2==4.6.0",
-    "av==12.3.0",
-    "requests>=2.28",
-    "anthropic>=0.34",
+    "anthropic>=1.0",
+    "keyring>=24",
+    "rich>=13",
+    "rumps>=0.4",
+    "fastapi>=0.115",
+    "jinja2>=3.1",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-mock>=3.14"]
+dev = ["pytest>=8.0", "pytest-mock>=3.14", "httpx>=0.27"]
 
 [project.scripts]
 notetaker = "notetaker.cli:app"
@@ -28,5 +31,8 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = ["notetaker"]
 
+[tool.setuptools.package-data]
+notetaker = ["templates/*.html", "static/*", "assets/*"]
+
 [tool.pytest.ini_options]
-markers = ["integration: slower tests that download/run a real faster-whisper model"]
+markers = ["integration: slower tests that touch a real external system (a downloaded model, brew, etc.)"]

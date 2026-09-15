@@ -1,341 +1,386 @@
-import json
-from unittest.mock import MagicMock
+from datetime import datetime
+from pathlib import Path
 
 from typer.testing import CliRunner
 
 from notetaker.cli import app
 from notetaker.config import Config
-from notetaker.recorder import BlackHoleStatus
+from notetaker.service import ServiceError, SessionInfo, SetupStatus
 
 runner = CliRunner()
 
 
-def test_init_writes_config_and_reports_blackhole_active(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.cli.write_default_config", lambda: True)
-    monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
+def _config(tmp_path):
+    return Config(tmp_path / "notes", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY")
+
+
+def test_init_writes_config_and_reports_system_audio_ready(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.service.initialize_config", lambda path: True)
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
     monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(tmp_path, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
+        "notetaker.cli.service.check_setup",
+        lambda config: SetupStatus(True, []),
     )
-    monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.cli.Transcriber", lambda model: None)
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "secret")
 
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 0
-    assert "BlackHole is installed and active" in result.output
+    assert "System audio: Core Audio process tap" in result.output
+    assert "ohr is installed" in result.output
+    assert "ANTHROPIC_API_KEY is set." in result.output
 
 
-def test_init_fails_when_api_key_missing(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.cli.write_default_config", lambda: True)
-    monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
+def test_init_fails_when_system_audio_not_supported(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.service.initialize_config", lambda path: True)
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
     monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(tmp_path, "tiny", "claude", "claude-sonnet-5", "MISSING_KEY"),
+        "notetaker.cli.service.check_setup",
+        lambda config: SetupStatus(True, [], system_audio_problem="System audio capture requires macOS 14.2+"),
     )
-    monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.delenv("MISSING_KEY", raising=False)
 
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 1
+    assert "error: System audio capture requires macOS 14.2+" in result.output
 
 
-def test_init_reports_apple_local_problems(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.cli.write_default_config", lambda: True)
-    monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
+def test_init_fails_when_transcription_not_ready(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.service.initialize_config", lambda path: False)
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
     monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(tmp_path, "tiny", "apple_local", "apple-foundationmodel", "UNUSED"),
+        "notetaker.cli.service.check_setup",
+        lambda config: SetupStatus(
+            True, [], transcription_ready=False, transcription_problems=["ohr is not installed."]
+        ),
     )
-    monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.cli.check_apple_local_preflight", lambda: ["apfel is not installed"])
 
     result = runner.invoke(app, ["init"])
 
     assert result.exit_code == 1
-    assert "apfel is not installed" in result.output
+    assert "error: ohr is not installed." in result.output
 
 
-def test_start_fails_when_blackhole_not_active(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("notetaker.cli.SESSION_FILE", tmp_path / "current_session.json")
-    monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.NOT_INSTALLED)
+def test_init_fails_when_provider_not_ready(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.service.initialize_config", lambda path: True)
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr(
+        "notetaker.cli.service.check_setup",
+        lambda config: SetupStatus(False, ["ANTHROPIC_API_KEY is not set."]),
+    )
 
-    result = runner.invoke(app, ["start", "Standup"])
+    result = runner.invoke(app, ["init"])
+
     assert result.exit_code == 1
+    assert "ANTHROPIC_API_KEY is not set." in result.output
 
 
-def test_start_fails_when_session_already_running(monkeypatch, tmp_path):
-    session_file = tmp_path / "current_session.json"
-    session_file.write_text(json.dumps({"pid": os_getpid_for_test(), "title": "x", "start_time": "2026-09-11T10:00:00", "session_dir": str(tmp_path)}))
-    monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
-    monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
+def test_start_reports_service_error(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.check_and_salvage_orphan", lambda config, config_dir: None)
 
-    result = runner.invoke(app, ["start", "Standup"])
-    assert result.exit_code == 1
-    assert "already running" in result.output
+    def fail(*a, **k):
+        raise ServiceError("recorder failed to start — see /tmp/recorder.log for details")
 
-
-def os_getpid_for_test():
-    import os
-    return os.getpid()
-
-
-def test_start_spawns_recorder_and_writes_session_file(monkeypatch, tmp_path):
-    session_file = tmp_path / "current_session.json"
-    monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
-    monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.cli.find_blackhole_device_index", lambda: 2)
-    monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(tmp_path, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
-    )
-    fake_proc = MagicMock(pid=12345)
-    fake_proc.poll.return_value = None
-    monkeypatch.setattr("notetaker.cli.subprocess.Popen", lambda *a, **k: fake_proc)
-
-    result = runner.invoke(app, ["start", "Standup"])
-
-    assert result.exit_code == 0
-    assert "Recording started" in result.output
-    assert "microphone access" in result.output
-    assert "Teams will not show" in result.output
-    session = json.loads(session_file.read_text())
-    assert session["pid"] == 12345
-    assert session["title"] == "Standup"
-
-
-def test_start_recovers_from_corrupt_session_file(monkeypatch, tmp_path):
-    session_file = tmp_path / "current_session.json"
-    session_file.write_text("{invalid json content")
-    monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
-    monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.cli.find_blackhole_device_index", lambda: 2)
-    monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(tmp_path, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
-    )
-    fake_proc = MagicMock(pid=54321)
-    fake_proc.poll.return_value = None
-    monkeypatch.setattr("notetaker.cli.subprocess.Popen", lambda *a, **k: fake_proc)
-
-    result = runner.invoke(app, ["start", "Weekly"])
-
-    assert result.exit_code == 0
-    assert "Recording started" in result.output
-    session = json.loads(session_file.read_text())
-    assert session["pid"] == 54321
-    assert session["title"] == "Weekly"
-
-
-def test_start_fails_when_recorder_exits_immediately(monkeypatch, tmp_path):
-    session_file = tmp_path / "current_session.json"
-    monkeypatch.setattr("notetaker.cli.CONFIG_DIR", tmp_path)
-    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
-    monkeypatch.setattr("notetaker.cli.check_blackhole", lambda: BlackHoleStatus.ACTIVE)
-    monkeypatch.setattr("notetaker.cli.find_blackhole_device_index", lambda: 2)
-    monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(tmp_path, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
-    )
-    fake_proc = MagicMock(pid=99999)
-    fake_proc.poll.return_value = 0
-    monkeypatch.setattr("notetaker.cli.subprocess.Popen", lambda *a, **k: fake_proc)
-    monkeypatch.setattr("notetaker.cli.time.sleep", lambda s: None)
+    monkeypatch.setattr("notetaker.cli.service.start_session", fail)
 
     result = runner.invoke(app, ["start", "Standup"])
 
     assert result.exit_code == 1
     assert "recorder failed to start" in result.output
-    assert not session_file.exists()
 
 
-def test_stop_fails_with_no_active_session(monkeypatch, tmp_path):
-    monkeypatch.setattr("notetaker.cli.SESSION_FILE", tmp_path / "current_session.json")
+def test_start_prints_reminders_and_confirmation_on_success(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.check_and_salvage_orphan", lambda config, config_dir: None)
+    monkeypatch.setattr(
+        "notetaker.cli.service.start_session",
+        lambda title, config, config_dir: SessionInfo(12345, title, datetime.now(), tmp_path),
+    )
+
+    result = runner.invoke(app, ["start", "Standup"])
+
+    assert result.exit_code == 0
+    assert "Microphone" in result.output
+    assert "Teams will not show" in result.output
+    assert "Recording started: Standup" in result.output
+
+
+def test_start_prints_recovery_message_when_orphan_salvaged(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    salvaged_note_path = tmp_path / "notes" / "2026-09-10-standup.md"
+    monkeypatch.setattr(
+        "notetaker.cli.service.check_and_salvage_orphan", lambda config, config_dir: salvaged_note_path
+    )
+    monkeypatch.setattr(
+        "notetaker.cli.service.start_session",
+        lambda title, config, config_dir: SessionInfo(12345, title, datetime.now(), tmp_path),
+    )
+
+    result = runner.invoke(app, ["start", "Standup"])
+
+    assert result.exit_code == 0
+    assert f"Recovered a crashed session and saved it as a note: {salvaged_note_path}" in result.output
+
+
+def test_start_continues_when_salvage_raises_unexpectedly(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+
+    def raise_disk_error(config, config_dir):
+        raise OSError("disk full")
+
+    monkeypatch.setattr("notetaker.cli.service.check_and_salvage_orphan", raise_disk_error)
+    monkeypatch.setattr(
+        "notetaker.cli.service.start_session",
+        lambda title, config, config_dir: SessionInfo(12345, title, datetime.now(), tmp_path),
+    )
+
+    result = runner.invoke(app, ["start", "Standup"])
+
+    assert result.exit_code == 0
+    assert "could not recover a possibly crashed session" in result.output
+    assert "Recording started: Standup" in result.output
+    assert "Recording started: Standup" in result.output
+
+
+def test_stop_reports_service_error_for_no_active_session(monkeypatch):
+    def fail(config_dir):
+        raise ServiceError("no active session.")
+
+    monkeypatch.setattr("notetaker.cli.service.read_active_session", fail)
+
     result = runner.invoke(app, ["stop"])
+
     assert result.exit_code == 1
     assert "no active session" in result.output
 
 
-def test_stop_fails_cleanly_on_corrupt_session_file(monkeypatch, tmp_path):
-    session_file = tmp_path / "current_session.json"
-    session_file.write_text("{not valid json")
-    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
-
-    result = runner.invoke(app, ["stop"])
-
-    assert result.exit_code == 1
-    assert "corrupt or unreadable" in result.output
-    assert str(session_file) in result.output
-
-
-def test_stop_skips_provider_call_when_transcript_empty(monkeypatch, tmp_path):
-    session_dir = tmp_path / "sessions" / "20260911-100000"
-    session_dir.mkdir(parents=True)
-    # no transcript.txt written — simulates a recorder that crashed at startup
-
-    session_file = tmp_path / "current_session.json"
-    session_file.write_text(
-        json.dumps(
-            {
-                "pid": 999999,
-                "title": "Standup",
-                "start_time": "2026-09-11T10:00:00",
-                "session_dir": str(session_dir),
-            }
-        )
-    )
-
-    notes_dir = tmp_path / "notes"
-    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
-    monkeypatch.setattr("notetaker.cli._pid_alive", lambda pid: False)
+def test_stop_prints_note_path_on_success(monkeypatch, tmp_path):
+    info = SessionInfo(999999, "Standup", datetime.now(), tmp_path)
+    monkeypatch.setattr("notetaker.cli.service.read_active_session", lambda config_dir: info)
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    note_path = tmp_path / "notes" / "2026-09-11-standup.md"
     monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
-    )
-
-    def fail_if_called(*a, **k):
-        raise AssertionError("get_provider should not be called for an empty transcript")
-
-    monkeypatch.setattr("notetaker.cli.get_provider", fail_if_called)
-    monkeypatch.setattr("notetaker.cli.summarize_transcript", fail_if_called)
-
-    result = runner.invoke(app, ["stop"])
-
-    assert result.exit_code == 0
-    saved_notes = list(notes_dir.glob("*.md"))
-    assert len(saved_notes) == 1
-    assert "No audio was captured" in saved_notes[0].read_text()
-
-
-def test_stop_salvages_transcript_and_writes_note(monkeypatch, tmp_path):
-    session_dir = tmp_path / "sessions" / "20260911-100000"
-    session_dir.mkdir(parents=True)
-    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n[00:00:07] world\n")
-
-    session_file = tmp_path / "current_session.json"
-    session_file.write_text(
-        json.dumps(
-            {
-                "pid": 999999,
-                "title": "Standup",
-                "start_time": "2026-09-11T10:00:00",
-                "session_dir": str(session_dir),
-            }
-        )
-    )
-
-    notes_dir = tmp_path / "notes"
-    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
-    monkeypatch.setattr("notetaker.cli._pid_alive", lambda pid: False)
-    monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
-    )
-
-    from notetaker.summarizer import Summary
-
-    monkeypatch.setattr("notetaker.cli.get_provider", lambda config: object())
-    monkeypatch.setattr(
-        "notetaker.cli.summarize_transcript",
-        lambda transcript, provider: Summary(text="summary text", action_items=["a"], tags=["t"]),
+        "notetaker.cli.service.stop_session", lambda info, config, config_dir, on_phase=None: note_path
     )
 
     result = runner.invoke(app, ["stop"])
 
     assert result.exit_code == 0
-    assert not session_file.exists()
-    assert not session_dir.exists()
-    saved_notes = list(notes_dir.glob("*.md"))
-    assert len(saved_notes) == 1
-    assert "summary text" in saved_notes[0].read_text()
-
-
-def test_stop_saves_note_with_error_when_summarization_fails(monkeypatch, tmp_path):
-    session_dir = tmp_path / "sessions" / "20260911-100000"
-    session_dir.mkdir(parents=True)
-    (session_dir / "transcript.txt").write_text("[00:00:03] hello\n")
-
-    session_file = tmp_path / "current_session.json"
-    session_file.write_text(
-        json.dumps(
-            {
-                "pid": 999999,
-                "title": "Standup",
-                "start_time": "2026-09-11T10:00:00",
-                "session_dir": str(session_dir),
-            }
-        )
-    )
-
-    notes_dir = tmp_path / "notes"
-    monkeypatch.setattr("notetaker.cli.SESSION_FILE", session_file)
-    monkeypatch.setattr("notetaker.cli._pid_alive", lambda pid: False)
-    monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
-    )
-    monkeypatch.setattr("notetaker.cli.get_provider", lambda config: object())
-
-    def raise_error(transcript, provider):
-        raise RuntimeError("network down")
-
-    monkeypatch.setattr("notetaker.cli.summarize_transcript", raise_error)
-
-    result = runner.invoke(app, ["stop"])
-
-    assert result.exit_code == 0
-    saved_notes = list(notes_dir.glob("*.md"))
-    assert len(saved_notes) == 1
-    assert "Summarization failed" in saved_notes[0].read_text()
-    assert "hello" in saved_notes[0].read_text()
-
-
-from datetime import datetime
-
-from notetaker.notes import write_note
-from notetaker.summarizer import Summary
+    assert str(note_path) in result.output
 
 
 def test_list_prints_notes(monkeypatch, tmp_path):
-    notes_dir = tmp_path / "notes"
-    write_note(notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5, Summary("s", [], ["proj"]), [])
-    monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
-    )
+    from notetaker.notes import NoteMeta
+
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    meta = NoteMeta("2026-09-11-standup", "Standup", datetime(2026, 9, 11, 10, 0), 5, ["proj"], Path("x.md"))
+    monkeypatch.setattr("notetaker.cli.service.list_all_notes", lambda config: [meta])
+
     result = runner.invoke(app, ["list"])
+
     assert result.exit_code == 0
     assert "Standup" in result.output
     assert "proj" in result.output
 
 
 def test_show_prints_note_body(monkeypatch, tmp_path):
-    notes_dir = tmp_path / "notes"
-    write_note(
-        notes_dir, "Standup", datetime(2026, 9, 11, 10, 0), 5,
-        Summary("Summary text", [], []), ["[00:00:01] hi"],
-    )
-    monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
-    )
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.get_note_body", lambda config, note_id: "Summary text")
+
     result = runner.invoke(app, ["show", "2026-09-11-standup"])
+
     assert result.exit_code == 0
     assert "Summary text" in result.output
 
 
 def test_show_missing_note_fails(monkeypatch, tmp_path):
-    notes_dir = tmp_path / "notes"
-    notes_dir.mkdir()
-    monkeypatch.setattr(
-        "notetaker.cli.load_config",
-        lambda: Config(notes_dir, "tiny", "claude", "claude-sonnet-5", "ANTHROPIC_API_KEY"),
-    )
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+
+    def fail(config, note_id):
+        raise ServiceError(f"no note found with id '{note_id}'.")
+
+    monkeypatch.setattr("notetaker.cli.service.get_note_body", fail)
+
     result = runner.invoke(app, ["show", "nonexistent"])
+
     assert result.exit_code == 1
+
+
+def test_set_api_key_reports_service_error(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+
+    def fail(config, api_key):
+        raise ServiceError("That API key was rejected by Anthropic's API — check it and try again.")
+
+    monkeypatch.setattr("notetaker.cli.service.save_provider_credential", fail)
+
+    result = runner.invoke(app, ["set-api-key", "sk-ant-bad-key"])
+
+    assert result.exit_code == 1
+    assert "rejected by Anthropic's API" in result.output
+
+
+def test_set_api_key_prints_confirmation_on_success(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.save_provider_credential", lambda config, api_key: None)
+
+    result = runner.invoke(app, ["set-api-key", "sk-ant-good-key"])
+
+    assert result.exit_code == 0
+    assert "ANTHROPIC_API_KEY saved to the macOS Keychain." in result.output
+
+
+def test_set_api_key_prompts_for_hidden_input_when_argument_omitted(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+
+    calls = {}
+
+    def fake_save(config, api_key):
+        calls["api_key"] = api_key
+
+    monkeypatch.setattr("notetaker.cli.service.save_provider_credential", fake_save)
+
+    result = runner.invoke(app, ["set-api-key"], input="sk-ant-prompted-key\n")
+
+    assert result.exit_code == 0
+    assert calls["api_key"] == "sk-ant-prompted-key"
+
+
+def test_show_api_key_prints_masked_value(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.get_masked_provider_credential", lambda config: "sk-ant••••1234")
+
+    result = runner.invoke(app, ["show-api-key"])
+
+    assert result.exit_code == 0
+    assert "sk-ant••••1234" in result.output
+
+
+def test_show_api_key_reports_when_unset(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    monkeypatch.setattr("notetaker.cli.service.get_masked_provider_credential", lambda config: None)
+
+    result = runner.invoke(app, ["show-api-key"])
+
+    assert result.exit_code == 0
+    assert "No credential stored for ANTHROPIC_API_KEY." in result.output
+
+
+def test_resummarize_reports_service_error(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+
+    def fail(config, note_id):
+        raise ServiceError(f"no note found with id '{note_id}'.")
+
+    monkeypatch.setattr("notetaker.cli.service.resummarize_note", fail)
+
+    result = runner.invoke(app, ["resummarize", "nonexistent"])
+
+    assert result.exit_code == 1
+    assert "no note found" in result.output
+
+
+def test_resummarize_prints_confirmation_on_success(monkeypatch, tmp_path):
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    note_path = tmp_path / "notes" / "2026-09-11-standup.md"
+    monkeypatch.setattr("notetaker.cli.service.resummarize_note", lambda config, note_id: note_path)
+
+    result = runner.invoke(app, ["resummarize", "2026-09-11-standup"])
+
+    assert result.exit_code == 0
+    assert f"Resummarized note: {note_path}" in result.output
+
+
+def test_stop_escapes_rich_markup_in_phase_callback(monkeypatch, tmp_path):
+    from rich.markup import escape
+
+    info = SessionInfo(999999, "Standup", datetime.now(), tmp_path)
+    monkeypatch.setattr("notetaker.cli.service.read_active_session", lambda config_dir: info)
+    monkeypatch.setattr("notetaker.cli.load_config", lambda: _config(tmp_path))
+    note_path = tmp_path / "notes" / "2026-09-11-standup.md"
+    captured = {}
+
+    def fake_stop_session(info, config, config_dir, on_phase=None):
+        captured["on_phase"] = on_phase
+        return note_path
+
+    monkeypatch.setattr("notetaker.cli.service.stop_session", fake_stop_session)
+
+    result = runner.invoke(app, ["stop"])
+
+    assert result.exit_code == 0
+    # Confirm the callback cli.py actually passed applies escape() before updating the spinner —
+    # calling it with bracketed text must not raise, and must route through escape().
+    calls = []
+    monkeypatch.setattr("rich.status.Status.update", lambda self, phase: calls.append(phase))
+    captured["on_phase"]("Summarizing [note]...")
+    assert calls == [escape("Summarizing [note]...")]
+
+
+def test_menubar_command_launches_the_app(monkeypatch):
+    calls = []
+
+    class FakeApp:
+        def __init__(self):
+            calls.append("constructed")
+
+        def run(self):
+            calls.append("ran")
+
+    monkeypatch.setattr("notetaker.menubar.NotetakerMenuBarApp", FakeApp)
+
+    result = runner.invoke(app, ["menubar"])
+
+    assert result.exit_code == 0
+    assert calls == ["constructed", "ran"]
+
+
+def test_dashboard_command_serves_on_localhost_and_runs_the_menu_bar_in_the_same_process(monkeypatch):
+    """One process: the web server runs on a background thread, the rumps
+    menu bar app owns the main thread — so a recording started from the
+    browser is always visible in the menu bar too."""
+    calls = {}
+
+    class FakeHandle:
+        url = "http://127.0.0.1:8420"
+
+    def fake_serve(host, port):
+        calls["serve"] = (host, port)
+        return FakeHandle()
+
+    class FakeApp:
+        def __init__(self, dashboard_url=None):
+            calls["dashboard_url"] = dashboard_url
+
+        def run(self):
+            calls["ran"] = True
+
+    monkeypatch.setattr("notetaker.dashboard.port_in_use_error", lambda host, port: None)
+    monkeypatch.setattr("notetaker.dashboard.serve_in_background", fake_serve)
+    monkeypatch.setattr("notetaker.menubar.NotetakerMenuBarApp", FakeApp)
+
+    result = runner.invoke(app, ["dashboard"])
+
+    assert result.exit_code == 0
+    assert calls["serve"] == ("127.0.0.1", 8420)
+    assert calls["dashboard_url"] == "http://127.0.0.1:8420"
+    assert calls["ran"] is True
+    assert "Dashboard: http://127.0.0.1:8420" in result.output
+    assert "Menu bar item is up" in result.output
+
+
+def test_dashboard_command_exits_before_showing_the_menu_bar_when_the_port_is_taken(monkeypatch):
+    monkeypatch.setattr(
+        "notetaker.dashboard.port_in_use_error", lambda host, port: f"cannot bind to http://{host}:{port}"
+    )
+    monkeypatch.setattr(
+        "notetaker.dashboard.serve_in_background", lambda host, port: pytest.fail("must not serve")
+    )
+    monkeypatch.setattr(
+        "notetaker.menubar.NotetakerMenuBarApp", lambda dashboard_url=None: pytest.fail("must not show")
+    )
+
+    result = runner.invoke(app, ["dashboard"])
+
+    assert result.exit_code == 1
+    assert "cannot bind to http://127.0.0.1:8420" in result.output

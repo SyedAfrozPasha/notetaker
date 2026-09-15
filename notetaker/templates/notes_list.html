@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Notes · Notetaker{% endblock %}
+{% block content %}
+{% macro filter_qs(target_page=None) -%}
+  {%- set parts = [] -%}
+  {%- if query %}{% set _ = parts.append('query=' ~ query | urlencode) %}{% endif -%}
+  {%- if tag %}{% set _ = parts.append('tag=' ~ tag | urlencode) %}{% endif -%}
+  {%- if start_date %}{% set _ = parts.append('start_date=' ~ start_date | urlencode) %}{% endif -%}
+  {%- if end_date %}{% set _ = parts.append('end_date=' ~ end_date | urlencode) %}{% endif -%}
+  {%- if target_page %}{% set _ = parts.append('page=' ~ target_page) %}{% endif -%}
+  /notes?{{ parts | join('&') }}
+{%- endmacro %}
+{% if setup_error %}
+<div class="banner error">Notetaker is not set up: {{ setup_error }}</div>
+{% else %}
+<div class="page-head">
+  <h2>Notes</h2>
+  {% if total_notes %}<span class="sub">{{ total_notes }} note{{ '' if total_notes == 1 else 's' }}</span>{% endif %}
+</div>
+
+<div class="card">
+  <form method="get" action="/notes">
+    <div class="filters">
+      <label>Search <input type="text" name="query" value="{{ query or '' }}" placeholder="Title or content"></label>
+      <label>Tag <input type="text" name="tag" value="{{ tag or '' }}"></label>
+      <label>From <input type="date" name="start_date" value="{{ start_date or '' }}"></label>
+      <label>To <input type="date" name="end_date" value="{{ end_date or '' }}"></label>
+    </div>
+    <div class="actions" style="margin-top:.9rem">
+      <button type="submit" class="btn">Filter</button>
+      {% if query or tag or start_date or end_date %}
+      <a href="/notes" class="btn">Clear filters</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+{% if error %}
+<div class="banner error">{{ error }}</div>
+{% elif notes %}
+<div class="card flush">
+  <ul class="note-list">
+    {% for note in notes %}
+    <li class="note-item">
+      <span class="date">{{ note.date.strftime('%Y-%m-%d') }}</span>
+      <a class="title" href="/notes/{{ note.note_id }}">{{ note.title }}</a>
+      {% if note.tags %}<span class="tags">{% for t in note.tags %}<span class="tag">{{ t }}</span>{% endfor %}</span>{% endif %}
+      <span class="duration">{{ note.duration_minutes }} min</span>
+    </li>
+    {% endfor %}
+  </ul>
+</div>
+{% if total_pages and total_pages > 1 %}
+<nav class="pagination" aria-label="Pagination">
+  {% if page > 1 %}
+  <a class="btn sm" href="{{ filter_qs(page - 1) }}">&larr; Prev</a>
+  {% else %}
+  <span class="btn sm disabled">&larr; Prev</span>
+  {% endif %}
+  <span class="meta">Page {{ page }} of {{ total_pages }}</span>
+  {% if page < total_pages %}
+  <a class="btn sm" href="{{ filter_qs(page + 1) }}">Next &rarr;</a>
+  {% else %}
+  <span class="btn sm disabled">Next &rarr;</span>
+  {% endif %}
+</nav>
+{% endif %}
+{% else %}
+<div class="card"><div class="empty-state">No notes found.</div></div>
+{% endif %}
+{% endif %}
+{% endblock %}

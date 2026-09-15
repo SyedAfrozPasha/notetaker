@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Settings · Notetaker{% endblock %}
+{% block content %}
+{% if setup_error %}
+<div class="banner error">Notetaker is not set up: {{ setup_error }}</div>
+{% else %}
+<div class="page-head"><h2>Settings</h2></div>
+
+{% if config_error %}<div class="banner error">{{ config_error }}</div>{% endif %}
+<div class="card">
+  <form method="post" action="/settings/config">
+    <fieldset>
+      <legend>Storage</legend>
+      <label>Notes directory
+        {% with value = config.notes_dir %}{% include "_notes_dir_field.html" %}{% endwith %}
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Audio</legend>
+      <p class="hint">Meeting audio is captured via a Core Audio process tap (macOS 14.2+, nothing to install).</p>
+      <label>Tap only this app <input type="text" name="tap_process" value="{{ config.tap_process or "" }}" placeholder="com.microsoft.teams2"><span class="hint">Bundle id. Optional; falls back to all system audio when empty or not running.</span></label>
+      <label class="check"><input type="checkbox" name="capture_microphone" {% if config.capture_microphone %}checked{% endif %}> Also record my voice (default input device)</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Summaries</legend>
+      <div class="grid">
+        <label>AI provider
+          <select name="ai_provider">
+            <option value="apple_local" {% if config.ai_provider == "apple_local" %}selected{% endif %}>Apple Local (apfel, on-device)</option>
+            <option value="claude" {% if config.ai_provider == "claude" %}selected{% endif %}>Claude (cloud)</option>
+          </select>
+        </label>
+        <label>Model <input type="text" name="ai_model" value="{{ config.ai_model }}" placeholder="apple-foundationmodel / claude-sonnet-5"><span class="hint">Resets to the provider default when you switch provider.</span></label>
+      </div>
+    </fieldset>
+
+    <div class="actions"><button type="submit" class="btn primary">Save configuration</button></div>
+  </form>
+</div>
+
+{% if config.ai_provider == "claude" %}
+<div class="card">
+  <h3>Claude API key</h3>
+  {% if credential_error %}<div class="banner error">{{ credential_error }}</div>{% endif %}
+  <p class="meta">Current key: <span class="cred">{{ masked_credential or "Not set" }}</span> · stored in the macOS Keychain, never on disk.</p>
+  <form method="post" action="/settings/credential">
+    <label>New API key <input type="password" name="api_key" required autocomplete="off"></label>
+    <div class="actions"><button type="submit" class="btn primary">Save API key</button></div>
+  </form>
+</div>
+{% endif %}
+{% endif %}
+{% endblock %}

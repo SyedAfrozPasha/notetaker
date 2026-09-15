@@ -1,24 +1,23 @@
-import json
-import os
-import shutil
-import signal
-import subprocess
-import sys
-import time
-from datetime import datetime
-from pathlib import Path
-
 import typer
+from rich.console import Console
+from rich.markup import escape
 
-from notetaker.config import CONFIG_DIR, load_config, write_default_config
-from notetaker.notes import find_note_path, list_notes, read_note_body, write_note
-from notetaker.recorder import BlackHoleStatus, check_blackhole, find_blackhole_device_index
-from notetaker.summarizer import Summary, check_apple_local_preflight, get_provider, summarize_transcript
-from notetaker.transcriber import Transcriber
+from notetaker import service
+from notetaker.config import CONFIG_DIR, CONFIG_PATH, ConfigError, load_config
+from notetaker.service import ServiceError
 
 app = typer.Typer()
+console = Console()
 
-SESSION_FILE_NAME = "current_session.json"
+
+def _load_config():
+    """Loads the config, turning a missing/invalid file into a clean error
+    exit instead of a traceback."""
+    try:
+        return load_config()
+    except ConfigError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1)
 
 
 @app.callback(invoke_without_command=True)
@@ -29,181 +28,175 @@ def main():
 
 @app.command("init")
 def init():
-    config_path = CONFIG_DIR / "config.yaml"
-    if write_default_config():
-        typer.echo(f"Wrote default config to {config_path}")
+    if service.initialize_config(CONFIG_PATH):
+        typer.echo(f"Wrote default config to {CONFIG_PATH}")
     else:
-        typer.echo(f"Config already exists at {config_path}, skipping.")
+        typer.echo(f"Config already exists at {CONFIG_PATH}, skipping.")
 
-    config = load_config()
+    config = _load_config()
+    with console.status("Checking audio setup and AI provider..."):
+        status = service.check_setup(config)
 
-    status = check_blackhole()
-    if status == BlackHoleStatus.NOT_INSTALLED:
-        typer.echo("BlackHole not found. Install it with: brew install blackhole-2ch")
-    elif status == BlackHoleStatus.INSTALLED_NOT_ACTIVE:
-        typer.echo(
-            "BlackHole is installed but not active yet — reboot your Mac, then re-run `notetaker init`."
-        )
-    else:
-        typer.echo("BlackHole is installed and active.")
+    if status.system_audio_problem:
+        typer.echo(f"error: {status.system_audio_problem}", err=True)
+        raise typer.Exit(1)
+    typer.echo(
+        "System audio: Core Audio process tap (nothing to install). macOS will ask for "
+        "'System Audio Recording' permission on the first `notetaker start`."
+    )
+
+    if not status.transcription_ready:
+        for problem in status.transcription_problems:
+            typer.echo(f"error: {problem}", err=True)
+        raise typer.Exit(1)
+    typer.echo("ohr is installed (SpeechAnalyzer transcription).")
+
+    if not status.provider_ready:
+        for problem in status.provider_problems:
+            typer.echo(f"error: {problem}", err=True)
+        raise typer.Exit(1)
 
     if config.ai_provider == "claude":
-        if not os.environ.get(config.api_key_env):
-            typer.echo(
-                f"error: {config.api_key_env} is not set. Export it in your shell profile, "
-                "then re-run `notetaker init`.",
-                err=True,
-            )
-            raise typer.Exit(1)
         typer.echo(f"{config.api_key_env} is set.")
     elif config.ai_provider == "apple_local":
-        problems = check_apple_local_preflight()
-        if problems:
-            for problem in problems:
-                typer.echo(f"error: {problem}", err=True)
-            raise typer.Exit(1)
         typer.echo("apfel is installed and running.")
-
-    typer.echo(f"Loading Whisper model '{config.whisper_model}' (downloads on first run)...")
-    Transcriber(config.whisper_model)
-    typer.echo("Whisper model ready.")
-
-
-SESSION_FILE = CONFIG_DIR / SESSION_FILE_NAME
-
-
-def _pid_alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
 
 
 @app.command()
 def start(title: str):
-    if SESSION_FILE.exists():
+    config = _load_config()
+    with console.status("Starting recorder..."):
         try:
-            session = json.loads(SESSION_FILE.read_text())
-            if _pid_alive(session["pid"]):
-                typer.echo("error: a session is already running. Run `notetaker stop` first.", err=True)
-                raise typer.Exit(1)
-        except (json.JSONDecodeError, KeyError, OSError):
-            pass
+            salvaged_path = service.check_and_salvage_orphan(config, CONFIG_DIR)
+            salvage_error = None
+        except Exception as exc:
+            salvaged_path = None
+            salvage_error = str(exc)
+        try:
+            info = service.start_session(title, config, CONFIG_DIR)
+            start_error = None
+        except ServiceError as exc:
+            info = None
+            start_error = str(exc)
 
-    status = check_blackhole()
-    if status != BlackHoleStatus.ACTIVE:
-        typer.echo("error: BlackHole is not active. Run `notetaker init` for setup instructions.", err=True)
+    if salvage_error is not None:
+        typer.echo(f"warning: could not recover a possibly crashed session: {salvage_error}", err=True)
+    if salvaged_path is not None:
+        typer.echo(f"Recovered a crashed session and saved it as a note: {salvaged_path}")
+    if start_error is not None:
+        typer.echo(f"error: {start_error}", err=True)
         raise typer.Exit(1)
-    device_index = find_blackhole_device_index()
-
-    typer.echo("macOS will ask for microphone access to read the BlackHole device — please allow it.")
+    for warning in info.warnings:
+        typer.echo(f"warning: {warning}", err=True)
+    typer.echo(
+        "macOS may ask for Microphone and System Audio Recording access on first run — please allow both."
+    )
     typer.echo(
         "Reminder: Teams will not show its own recording indicator for this. "
         "Let participants know you're recording."
     )
-
-    config = load_config()
-    start_time = datetime.now()
-    session_dir = CONFIG_DIR / "sessions" / start_time.strftime("%Y%m%d-%H%M%S")
-    session_dir.mkdir(parents=True, exist_ok=True)
-
-    log_path = session_dir / "recorder.log"
-    log_file = open(log_path, "w")
-    try:
-        proc = subprocess.Popen(
-            [sys.executable, "-m", "notetaker.recorder", str(session_dir), str(device_index), config.whisper_model],
-            start_new_session=True,
-            stdout=log_file,
-            stderr=subprocess.STDOUT,
-        )
-    finally:
-        log_file.close()
-
-    time.sleep(0.5)
-    if proc.poll() is not None:
-        typer.echo(f"error: recorder failed to start — see {log_path} for details", err=True)
-        raise typer.Exit(1)
-
-    SESSION_FILE.write_text(
-        json.dumps(
-            {
-                "pid": proc.pid,
-                "title": title,
-                "start_time": start_time.isoformat(),
-                "session_dir": str(session_dir),
-            }
-        )
-    )
-    typer.echo(f"Recording started: {title}")
+    typer.echo(f"Recording started: {info.title}")
 
 
 @app.command()
 def stop():
-    if not SESSION_FILE.exists():
-        typer.echo("error: no active session.", err=True)
-        raise typer.Exit(1)
-
     try:
-        session = json.loads(SESSION_FILE.read_text())
-        pid = session["pid"]
-        session_dir = Path(session["session_dir"])
-    except (json.JSONDecodeError, KeyError, OSError):
-        typer.echo(
-            f"error: session file at {SESSION_FILE} is corrupt or unreadable. "
-            f"Check ~/.notetaker/sessions/ manually for a salvageable transcript, "
-            f"then remove {SESSION_FILE} to reset.",
-            err=True,
-        )
+        info = service.read_active_session(CONFIG_DIR)
+    except ServiceError as exc:
+        typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1)
-
-    if _pid_alive(pid):
-        os.kill(pid, signal.SIGTERM)
-        for _ in range(30):
-            if not _pid_alive(pid):
-                break
-            time.sleep(1)
-
-    transcript_path = session_dir / "transcript.txt"
-    transcript = transcript_path.read_text() if transcript_path.exists() else ""
-    transcript_lines = transcript.splitlines()
-
-    start_time = datetime.fromisoformat(session["start_time"])
-    duration_minutes = int((datetime.now() - start_time).total_seconds() // 60)
-
-    config = load_config()
-    if not transcript.strip():
-        summary = Summary(text="No audio was captured for this session.", action_items=[], tags=[])
-    else:
+    config = _load_config()
+    with console.status("Stopping recorder...") as status:
         try:
-            provider = get_provider(config)
-            summary = summarize_transcript(transcript, provider)
-        except Exception as exc:
-            summary = Summary(text=f"Summarization failed: {exc}", action_items=[], tags=[])
-
-    note_path = write_note(
-        config.notes_dir, session["title"], start_time, duration_minutes, summary, transcript_lines
-    )
-
-    shutil.rmtree(session_dir, ignore_errors=True)
-    SESSION_FILE.unlink()
-
+            note_path = service.stop_session(
+                info, config, CONFIG_DIR, on_phase=lambda phase: status.update(escape(phase))
+            )
+        except ServiceError as exc:
+            stop_error = str(exc)
+        else:
+            stop_error = None
+    if stop_error is not None:
+        typer.echo(f"error: {stop_error}", err=True)
+        raise typer.Exit(1)
     typer.echo(f"Saved note: {note_path}")
 
 
 @app.command(name="list")
 def list_command():
-    config = load_config()
-    for meta in list_notes(config.notes_dir):
+    config = _load_config()
+    for meta in service.list_all_notes(config):
         tags = ", ".join(meta.tags)
         typer.echo(f"{meta.note_id}  {meta.title}  [{tags}]")
 
 
 @app.command()
 def show(note_id: str):
-    config = load_config()
-    path = find_note_path(config.notes_dir, note_id)
-    if path is None:
-        typer.echo(f"error: no note found with id '{note_id}'.", err=True)
+    config = _load_config()
+    try:
+        body = service.get_note_body(config, note_id)
+    except ServiceError as exc:
+        typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1)
-    typer.echo(read_note_body(path))
+    typer.echo(body)
+
+
+@app.command("set-api-key")
+def set_api_key(api_key: str = typer.Argument(None)):
+    if api_key is None:
+        api_key = typer.prompt("Enter your Claude API key", hide_input=True)
+    config = _load_config()
+    try:
+        service.save_provider_credential(config, api_key)
+    except ServiceError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"{config.api_key_env} saved to the macOS Keychain.")
+
+
+@app.command("show-api-key")
+def show_api_key():
+    config = _load_config()
+    masked = service.get_masked_provider_credential(config)
+    if masked is None:
+        typer.echo(f"No credential stored for {config.api_key_env}.")
+    else:
+        typer.echo(masked)
+
+
+@app.command()
+def resummarize(note_id: str):
+    config = _load_config()
+    try:
+        note_path = service.resummarize_note(config, note_id)
+    except ServiceError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"Resummarized note: {note_path}")
+
+
+@app.command()
+def menubar():
+    """Launches the menu bar app on its own, without the web dashboard (blocks until quit)."""
+    from notetaker.menubar import NotetakerMenuBarApp
+
+    NotetakerMenuBarApp().run()
+
+
+@app.command()
+def dashboard():
+    """Launches the local web dashboard at http://127.0.0.1:8420 and the menu bar app,
+    together in one process (blocks until quit)."""
+    from notetaker import dashboard as dashboard_module
+    from notetaker.menubar import NotetakerMenuBarApp
+
+    host, port = dashboard_module.DASHBOARD_HOST, dashboard_module.DASHBOARD_PORT
+    error = dashboard_module.port_in_use_error(host, port)
+    if error:
+        typer.echo(f"error: {error}", err=True)
+        raise typer.Exit(1)
+    served = dashboard_module.serve_in_background(host, port)
+    typer.echo(f"Dashboard: {served.url}")
+    typer.echo("Menu bar item is up (⏺ while recording). Press Ctrl+C, or choose Quit in the menu bar, to stop.")
+    # rumps needs the main thread (Cocoa); the web server keeps running on
+    # its daemon thread until Quit or SIGTERM ends the whole process.
+    NotetakerMenuBarApp(dashboard_url=served.url).run()
